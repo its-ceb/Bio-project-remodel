@@ -1,5 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Hash, Lock, LogOut, Power, Plus, UserPlus, LogIn, ShieldAlert, Users, MessageSquare, CheckCheck, Trash2, MoreVertical, Pin, Settings, Eye, Crown, X, Award } from 'lucide-react';
+import { 
+  Send, Hash, Lock, LogOut, Power, Plus, UserPlus, LogIn, 
+  ShieldAlert, Users, MessageSquare, CheckCheck, Trash2, 
+  MoreVertical, Pin, Settings, Eye, Crown, X, Award, 
+  Image as ImageIcon, Reply, Loader2 
+} from 'lucide-react';
 import { database } from '@/lib/firebase';
 import { ref, push, onValue, get, set, onDisconnect, update, remove } from 'firebase/database';
 import UserProfileModal, { UserProfileData } from './UserProfileModal';
@@ -8,15 +13,26 @@ interface SecretChatProps {
   onClose: () => void;
 }
 
+interface ReplyContext {
+  id: string;
+  sender: string;
+  text: string;
+  imageUrl?: string;
+}
+
 interface ChatMessage {
   id: string;
   sender: string;
   receiver: string;
   text: string;
+  imageUrl?: string;
   time: string;
   timestamp: number;
   readBy?: Record<string, boolean>;
+  replyTo?: ReplyContext;
 }
+
+const IMGBB_API_KEY = '9e341096967527234e9d141032f6a8c5';
 
 export default function SecretChat({ onClose }: SecretChatProps) {
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
@@ -35,6 +51,19 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const [conversations, setConversations] = useState<string[]>([]);
   const [rawMessages, setRawMessages] = useState<ChatMessage[]>([]);
   const [inputMessage, setInputMessage] = useState('');
+
+  // Image Upload State
+  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [expandedImageUrl, setExpandedImageUrl] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Reply State
+  const [replyingTo, setReplyingTo] = useState<ReplyContext | null>(null);
+
+  // Swipe Gesture Ref/State
+  const touchStartXRef = useRef<number | null>(null);
 
   const [showNewDMModal, setShowNewDMModal] = useState(false);
   const [selectedDMUser, setSelectedDMUser] = useState('');
@@ -144,6 +173,44 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     }, 2000);
   };
 
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      if (!file.type.startsWith('image/')) {
+        alert('Please select a valid image file.');
+        return;
+      }
+      setSelectedImage(file);
+      setImagePreview(URL.createObjectURL(file));
+    }
+  };
+
+  const cancelImageSelection = () => {
+    setSelectedImage(null);
+    setImagePreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const uploadImageToImgBB = async (file: File): Promise<string> => {
+    const formData = new FormData();
+    formData.append('image', file);
+
+    const response = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`ImgBB API responded with status ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (data && data.data && data.data.display_url) {
+      return data.data.display_url;
+    }
+    throw new Error('Invalid response structure from ImgBB API');
+  };
+
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthError('');
@@ -215,10 +282,12 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           id: key,
           sender: value.sender,
           receiver: value.receiver || 'general',
-          text: value.text,
+          text: value.text || '',
+          imageUrl: value.imageUrl,
           time: value.time,
           timestamp: value.timestamp || 0,
           readBy: value.readBy || {},
+          replyTo: value.replyTo || undefined,
         }));
 
         setRawMessages(loaded);
@@ -253,26 +322,55 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!inputMessage.trim() || !currentUser) return;
+    if ((!inputMessage.trim() && !selectedImage) || !currentUser) return;
 
     const userTypingRef = ref(database, `typing/${activeChannel}/${currentUser}`);
     set(userTypingRef, false);
 
+    let uploadedUrl = '';
+    if (selectedImage) {
+      setIsUploadingImage(true);
+      try {
+        uploadedUrl = await uploadImageToImgBB(selectedImage);
+      } catch (err) {
+        console.error('Image upload error:', err);
+        alert('Failed to upload image. Please verify your ImgBB connection.');
+        setIsUploadingImage(false);
+        return;
+      }
+      setIsUploadingImage(false);
+    }
+
+    // Clean replyTo context so undefined properties are omitted completely
+    let sanitizedReplyTo: ReplyContext | null = null;
+    if (replyingTo) {
+      sanitizedReplyTo = {
+        id: replyingTo.id || '',
+        sender: replyingTo.sender || '',
+        text: replyingTo.text || '',
+        ...(replyingTo.imageUrl ? { imageUrl: replyingTo.imageUrl } : {}),
+      };
+    }
+
     const messagesRef = ref(database, 'messages');
-    const newMessage = {
+    const newMessage: Record<string, any> = {
       sender: currentUser,
       receiver: activeChannel,
       text: inputMessage.trim(),
+      ...(uploadedUrl ? { imageUrl: uploadedUrl } : {}),
       time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       timestamp: Date.now(),
       readBy: {
         [currentUser]: true,
       },
+      ...(sanitizedReplyTo ? { replyTo: sanitizedReplyTo } : {}),
     };
 
     try {
       await push(messagesRef, newMessage);
       setInputMessage('');
+      cancelImageSelection();
+      setReplyingTo(null);
     } catch (err) {
       console.error('Error sending message:', err);
     }
@@ -337,6 +435,27 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     } catch (err) {
       console.error('Error granting badge:', err);
     }
+  };
+
+  // Swipe-to-reply touch handlers
+  const handleTouchStart = (e: React.TouchEvent) => {
+    touchStartXRef.current = e.touches[0].clientX;
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent, msg: ChatMessage) => {
+    if (touchStartXRef.current === null) return;
+    const touchEndX = e.changedTouches[0].clientX;
+    const swipeDistance = touchEndX - touchStartXRef.current;
+
+    if (swipeDistance > 60) {
+      setReplyingTo({
+        id: msg.id,
+        sender: msg.sender,
+        text: msg.text || (msg.imageUrl ? '📷 Photo' : ''),
+        imageUrl: msg.imageUrl,
+      });
+    }
+    touchStartXRef.current = null;
   };
 
   const displayedMessages = rawMessages.filter((msg) => {
@@ -587,7 +706,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           </div>
         </div>
 
-        {/* SIDEBAR FOOTER: SETTINGS (BOTTOM LEFT) & NEW MESSAGE */}
+        {/* SIDEBAR FOOTER: SETTINGS & NEW DM */}
         <div className="p-3 border-t border-slate-800 bg-[#111b21] flex items-center justify-between">
           <button
             onClick={() => setShowSettingsModal(true)}
@@ -682,7 +801,9 @@ export default function SecretChat({ onClose }: SecretChatProps) {
             <div className="flex items-center gap-2 overflow-hidden">
               <Pin className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
               <span className="font-bold text-emerald-400 shrink-0">{pinnedMessage.sender}:</span>
-              <span className="truncate text-slate-300">{pinnedMessage.text}</span>
+              <span className="truncate text-slate-300">
+                {pinnedMessage.text || (pinnedMessage.imageUrl ? '📷 Photo' : '')}
+              </span>
             </div>
             <button
               onClick={(e) => {
@@ -715,17 +836,19 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                 <div
                   key={msg.id}
                   id={`msg-${msg.id}`}
-                  className={`flex flex-col ${isSelf ? 'items-end' : 'items-start'} relative group`}
+                  onTouchStart={handleTouchStart}
+                  onTouchEnd={(e) => handleTouchEnd(e, msg)}
+                  className={`flex flex-col ${isSelf ? 'items-end' : 'items-start'} relative group transition-transform duration-200`}
                 >
                   <div
-                    className={`max-w-[80%] sm:max-w-[65%] rounded-2xl px-3.5 py-2 shadow-sm text-sm relative ${
+                    className={`max-w-[85%] sm:max-w-[65%] rounded-2xl px-3.5 py-2 shadow-sm text-sm relative ${
                       isSelf
                         ? 'bg-[#005c4b] text-[#e9edef] rounded-tr-none'
                         : 'bg-[#202c33] text-[#e9edef] rounded-tl-none'
                     }`}
                   >
                     {/* SENDER HEADER */}
-                    <div className="flex items-center justify-between border-b border-slate-700/40 pb-1 mb-1 gap-4">
+                    <div className="flex items-center justify-between border-b border-slate-700/40 pb-1 mb-1.5 gap-4">
                       <div className="flex items-center gap-2">
                         {renderAvatar(msg.sender, 'h-5 w-5')}
                         <span
@@ -755,6 +878,21 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                           >
                             <button
                               onClick={() => {
+                                setReplyingTo({
+                                  id: msg.id,
+                                  sender: msg.sender,
+                                  text: msg.text || (msg.imageUrl ? '📷 Photo' : ''),
+                                  imageUrl: msg.imageUrl,
+                                });
+                                setActiveMessageMenuId(null);
+                              }}
+                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700/70"
+                            >
+                              <Reply className="h-3.5 w-3.5 text-emerald-400" /> Reply
+                            </button>
+
+                            <button
+                              onClick={() => {
                                 setPinnedMessageId(msg.id);
                                 setActiveMessageMenuId(null);
                               }}
@@ -776,7 +914,41 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                       </div>
                     </div>
 
-                    <p className="leading-relaxed whitespace-pre-wrap text-sm">{msg.text}</p>
+                    {/* REPLY PREVIEW IN BUBBLE */}
+                    {msg.replyTo && (
+                      <div
+                        onClick={() => {
+                          const target = document.getElementById(`msg-${msg.replyTo?.id}`);
+                          target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }}
+                        className="mb-2 rounded-lg border-l-4 border-emerald-400 bg-slate-900/60 p-2 text-xs cursor-pointer hover:bg-slate-900/90 transition-colors"
+                      >
+                        <span className="block font-bold text-emerald-400">{msg.replyTo.sender}</span>
+                        {msg.replyTo.imageUrl && (
+                          <span className="block text-[11px] text-slate-400 italic">📷 Photo</span>
+                        )}
+                        {msg.replyTo.text && (
+                          <p className="truncate text-slate-300 text-[11px]">{msg.replyTo.text}</p>
+                        )}
+                      </div>
+                    )}
+
+                    {/* IMAGE CONTENT */}
+                    {msg.imageUrl && (
+                      <div className="my-1 overflow-hidden rounded-xl bg-slate-900 border border-slate-700/50">
+                        <img
+                          src={msg.imageUrl}
+                          alt="Attachment"
+                          onClick={() => setExpandedImageUrl(msg.imageUrl || null)}
+                          className="max-h-72 w-full object-cover cursor-pointer hover:opacity-95 transition-opacity"
+                        />
+                      </div>
+                    )}
+
+                    {/* TEXT CONTENT */}
+                    {msg.text && (
+                      <p className="leading-relaxed whitespace-pre-wrap text-sm">{msg.text}</p>
+                    )}
 
                     <div className="flex items-center justify-end gap-1 mt-1">
                       <span
@@ -818,9 +990,60 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* INPUT BAR */}
-        <div className="bg-[#1f2c34] p-3 border-t border-slate-800">
+        {/* INPUT & ATTACHMENT PREVIEW PANEL */}
+        <div className="bg-[#1f2c34] p-3 border-t border-slate-800 space-y-2">
+          {/* REPLY PREVIEW BAR */}
+          {replyingTo && (
+            <div className="flex items-center justify-between rounded-xl bg-[#2a3942] px-3 py-2 border-l-4 border-emerald-400 text-xs text-slate-200 max-w-5xl mx-auto">
+              <div className="overflow-hidden">
+                <span className="block font-bold text-emerald-400">Replying to @{replyingTo.sender}</span>
+                <p className="truncate text-slate-300 text-[11px]">{replyingTo.text}</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setReplyingTo(null)}
+                className="p-1 text-slate-400 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+
+          {/* IMAGE SELECTION PREVIEW BAR */}
+          {imagePreview && (
+            <div className="relative inline-block max-w-5xl mx-auto">
+              <div className="relative h-20 w-20 overflow-hidden rounded-xl border border-slate-700 bg-slate-900">
+                <img src={imagePreview} alt="Upload preview" className="h-full w-full object-cover" />
+                <button
+                  type="button"
+                  onClick={cancelImageSelection}
+                  className="absolute right-1 top-1 rounded-full bg-slate-950/80 p-1 text-white hover:bg-red-600 transition-colors"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              </div>
+            </div>
+          )}
+
           <form onSubmit={handleSendMessage} className="flex items-center gap-2 max-w-5xl mx-auto">
+            {/* HIDDEN FILE INPUT */}
+            <input
+              type="file"
+              accept="image/*"
+              ref={fileInputRef}
+              onChange={handleImageSelect}
+              className="hidden"
+            />
+
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              title="Attach Image"
+              className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#2a3942] text-slate-300 hover:text-emerald-400 hover:bg-slate-700 transition-colors shrink-0"
+            >
+              <ImageIcon className="h-5 w-5" />
+            </button>
+
             <input
               type="text"
               value={inputMessage}
@@ -832,16 +1055,43 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               }
               className="flex-1 rounded-xl bg-[#2a3942] px-4 py-3 text-sm text-[#d1d7db] placeholder-[#8696a0] outline-none focus:ring-1 focus:ring-emerald-500"
             />
+
             <button
               type="submit"
-              disabled={!inputMessage.trim()}
+              disabled={(!inputMessage.trim() && !selectedImage) || isUploadingImage}
               className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#00a884] text-white hover:bg-[#008f70] disabled:opacity-50 transition-colors shrink-0"
             >
-              <Send className="h-5 w-5" />
+              {isUploadingImage ? (
+                <Loader2 className="h-5 w-5 animate-spin" />
+              ) : (
+                <Send className="h-5 w-5" />
+              )}
             </button>
           </form>
         </div>
       </main>
+
+      {/* FULL IMAGE EXPAND LIGHTBOX MODAL */}
+      {expandedImageUrl && (
+        <div
+          onClick={() => setExpandedImageUrl(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm cursor-pointer"
+        >
+          <div className="relative max-h-[90vh] max-w-[90vw]">
+            <button
+              onClick={() => setExpandedImageUrl(null)}
+              className="absolute -top-10 right-0 rounded-full bg-slate-800 p-2 text-white hover:bg-slate-700"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <img
+              src={expandedImageUrl}
+              alt="Expanded Attachment"
+              className="max-h-[85vh] max-w-full rounded-2xl object-contain shadow-2xl"
+            />
+          </div>
+        </div>
+      )}
 
       {/* SETTINGS MODAL */}
       {showSettingsModal && (
