@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, User, Upload } from 'lucide-react';
+import { X, User, Upload, Loader2 } from 'lucide-react';
 import { database } from '@/lib/firebase';
 import { ref, update } from 'firebase/database';
 
@@ -19,6 +19,8 @@ interface UserProfileModalProps {
   onProfileUpdated: () => void;
 }
 
+const IMGBB_API_KEY = '9e341096967527234e9d141032f6a8c5';
+
 export default function UserProfileModal({
   username,
   currentProfile,
@@ -29,47 +31,39 @@ export default function UserProfileModal({
   const [avatarUrl, setAvatarUrl] = useState(currentProfile.avatarUrl || '');
   const [secretCode, setSecretCode] = useState('');
   const [saving, setSaving] = useState(false);
+  const [uploadingImage, setUploadingImage] = useState(false);
 
-  // Compress & resize image to prevent Firebase payload bloat
-  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 200;
-        const MAX_HEIGHT = 200;
-        let width = img.width;
-        let height = img.height;
+    setUploadingImage(true);
 
-        if (width > height) {
-          if (width > MAX_WIDTH) {
-            height *= MAX_WIDTH / width;
-            width = MAX_WIDTH;
-          }
-        } else {
-          if (height > MAX_HEIGHT) {
-            width *= MAX_HEIGHT / height;
-            height = MAX_HEIGHT;
-          }
-        }
+    const formData = new FormData();
+    formData.append('image', file);
 
-        canvas.width = width;
-        canvas.height = height;
+    try {
+      const response = await fetch(`https://api.imgbb.com/1/upload?key=${IMGBB_API_KEY}`, {
+        method: 'POST',
+        body: formData,
+      });
 
-        const ctx = canvas.getContext('2d');
-        ctx?.drawImage(img, 0, 0, width, height);
+      const result = await response.json();
 
-        // Compress image to JPEG at 80% quality
-        const compressedBase64 = canvas.toDataURL('image/jpeg', 0.8);
-        setAvatarUrl(compressedBase64);
-      };
-      img.src = event.target?.result as string;
-    };
-    reader.readAsDataURL(file);
+      if (result.success && result.data?.url) {
+        setAvatarUrl(result.data.url);
+      } else {
+        console.error('ImgBB upload error:', result);
+      }
+    } catch (err) {
+      console.error('Failed to upload image to ImgBB:', err);
+    } finally {
+      setUploadingImage(false);
+    }
+  };
+
+  const handleRemoveImage = () => {
+    setAvatarUrl('');
   };
 
   const handleSave = async (e: React.FormEvent) => {
@@ -78,7 +72,7 @@ export default function UserProfileModal({
 
     try {
       const userRef = ref(database, `users/${username}/profile`);
-      const isFounderClaim = secretCode.trim() === '777' || currentProfile.isFounder;
+      const isFounderClaim = secretCode.trim() === '777-founder' || currentProfile.isFounder;
 
       const updatePayload: UserProfileData = {
         bio,
@@ -94,7 +88,7 @@ export default function UserProfileModal({
               badgeText: currentProfile.badgeText || '',
               badgeEmoji: currentProfile.badgeEmoji || '',
               badgeBgColor: currentProfile.badgeBgColor || '',
-              isFounder: currentProfile.isFounder || false,
+              isFounder: false,
             }),
       };
 
@@ -146,16 +140,16 @@ export default function UserProfileModal({
                 <span className="font-bold text-sm text-white">
                   {username}
                 </span>
-                {(currentProfile.badgeText || secretCode.trim() === '777') && (
+                {(currentProfile.badgeText || secretCode.trim() === '777-founder') && (
                   <span
                     className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] font-black uppercase tracking-wider text-white shadow-sm ${
-                      secretCode.trim() === '777' || currentProfile.isFounder
+                      secretCode.trim() === '777-founder' || currentProfile.isFounder
                         ? 'bg-gradient-to-r from-red-700 to-rose-900 border border-red-500/50'
                         : currentProfile.badgeBgColor
                     }`}
                   >
-                    <span>{secretCode.trim() === '777' ? '🐺' : currentProfile.badgeEmoji}</span>
-                    <span>{secretCode.trim() === '777' ? 'FOUNDER' : currentProfile.badgeText}</span>
+                    <span>{secretCode.trim() === '777-founder' || currentProfile.isFounder ? '🐺' : currentProfile.badgeEmoji}</span>
+                    <span>{secretCode.trim() === '777-founder' || currentProfile.isFounder ? 'FOUNDER' : currentProfile.badgeText}</span>
                   </span>
                 )}
               </div>
@@ -169,14 +163,25 @@ export default function UserProfileModal({
             <label className="block text-xs font-semibold text-slate-300 mb-1">Profile Picture</label>
             <div className="flex items-center gap-2">
               <label className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-dashed border-slate-700 bg-[#2a3942] px-3.5 py-2.5 text-xs text-slate-300 hover:border-emerald-500 hover:text-white cursor-pointer transition-colors">
-                <Upload className="h-4 w-4 text-emerald-400" />
-                <span>Upload from device</span>
-                <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" />
+                {uploadingImage ? (
+                  <Loader2 className="h-4 w-4 animate-spin text-emerald-400" />
+                ) : (
+                  <Upload className="h-4 w-4 text-emerald-400" />
+                )}
+                <span>{uploadingImage ? 'Uploading image...' : 'Upload from device'}</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleImageUpload}
+                  disabled={uploadingImage}
+                  className="hidden"
+                />
               </label>
               {avatarUrl && (
                 <button
                   type="button"
-                  onClick={() => setAvatarUrl('')}
+                  onClick={handleRemoveImage}
+                  disabled={uploadingImage}
                   className="rounded-xl bg-red-600/10 border border-red-500/30 px-3 py-2.5 text-xs font-semibold text-red-400 hover:bg-red-600 hover:text-white"
                 >
                   Remove
@@ -206,7 +211,7 @@ export default function UserProfileModal({
             </button>
             <button
               type="submit"
-              disabled={saving}
+              disabled={saving || uploadingImage}
               className="rounded-xl bg-[#00a884] px-5 py-2 text-xs font-bold text-white hover:bg-[#008f70] disabled:opacity-50 shadow-lg"
             >
               {saving ? 'Saving...' : 'Save Profile'}

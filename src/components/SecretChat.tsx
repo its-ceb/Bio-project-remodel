@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Send, Hash, Lock, LogOut, Power, Plus, UserPlus, LogIn, ShieldAlert, Users, MessageSquare, CheckCheck, Trash2, MoreVertical, Pin, Settings, Eye, Crown, X } from 'lucide-react';
+import { Send, Hash, Lock, LogOut, Power, Plus, UserPlus, LogIn, ShieldAlert, Users, MessageSquare, CheckCheck, Trash2, MoreVertical, Pin, Settings, Eye, Crown, X, Award } from 'lucide-react';
 import { database } from '@/lib/firebase';
 import { ref, push, onValue, get, set, onDisconnect, update, remove } from 'firebase/database';
 import UserProfileModal, { UserProfileData } from './UserProfileModal';
@@ -48,11 +48,16 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const [hiddenChannels, setHiddenChannels] = useState<string[]>([]);
   const [showChannelMenu, setShowChannelMenu] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showGrantBadgeModal, setShowGrantBadgeModal] = useState(false);
 
   // Message Options dropdown state
   const [activeMessageMenuId, setActiveMessageMenuId] = useState<string | null>(null);
 
-  // Grant Badge Form state (Inside Settings for Founders)
+  // Typing indicators state
+  const [typingUsers, setTypingUsers] = useState<Record<string, boolean>>({});
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Grant Badge Form state
   const [grantTargetUser, setGrantTargetUser] = useState('');
   const [badgeCodeInput, setBadgeCodeInput] = useState('');
 
@@ -64,7 +69,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
   useEffect(() => {
     scrollToBottom();
-  }, [rawMessages, activeChannel]);
+  }, [rawMessages, activeChannel, typingUsers]);
 
   const fetchUsersAndProfiles = async () => {
     try {
@@ -101,6 +106,43 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
     return () => unsubscribePresence();
   }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const typingRef = ref(database, `typing/${activeChannel}`);
+    const unsubscribe = onValue(typingRef, (snapshot) => {
+      const data = snapshot.val() || {};
+      const activeTyping: Record<string, boolean> = {};
+
+      Object.entries(data).forEach(([user, isTyping]) => {
+        if (user !== currentUser && isTyping) {
+          activeTyping[user] = true;
+        }
+      });
+
+      setTypingUsers(activeTyping);
+    });
+
+    return () => unsubscribe();
+  }, [currentUser, activeChannel]);
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setInputMessage(e.target.value);
+
+    if (!currentUser) return;
+
+    const userTypingRef = ref(database, `typing/${activeChannel}/${currentUser}`);
+    set(userTypingRef, true);
+
+    if (typingTimeoutRef.current) {
+      clearTimeout(typingTimeoutRef.current);
+    }
+
+    typingTimeoutRef.current = setTimeout(() => {
+      set(userTypingRef, false);
+    }, 2000);
+  };
 
   const handleAuthSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -213,6 +255,9 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     e.preventDefault();
     if (!inputMessage.trim() || !currentUser) return;
 
+    const userTypingRef = ref(database, `typing/${activeChannel}/${currentUser}`);
+    set(userTypingRef, false);
+
     const messagesRef = ref(database, 'messages');
     const newMessage = {
       sender: currentUser,
@@ -233,8 +278,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     }
   };
 
-  // Founder global message deletion
-  const handleFounderDeleteMessage = async (msgId: string) => {
+  const handleDeleteMessage = async (msgId: string) => {
     try {
       await remove(ref(database, `messages/${msgId}`));
       if (pinnedMessageId === msgId) setPinnedMessageId(null);
@@ -260,11 +304,39 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
   const handleGrantBadgeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!grantTargetUser || !badgeCodeInput.trim()) return;
+    const code = badgeCodeInput.trim();
+    if (!grantTargetUser || !code) return;
 
-    alert(`Badge placeholder code "${badgeCodeInput.trim()}" registered for @${grantTargetUser}`);
-    setGrantTargetUser('');
-    setBadgeCodeInput('');
+    let badgeData: Partial<UserProfileData> = {};
+
+    if (code === '400') {
+      badgeData = {
+        badgeText: 'NOOB',
+        badgeEmoji: '🐣',
+        badgeBgColor: 'bg-slate-700 border border-slate-500',
+      };
+    } else if (code === '600') {
+      badgeData = {
+        badgeText: 'TUFF',
+        badgeEmoji: '🗿',
+        badgeBgColor: 'bg-gradient-to-r from-purple-700 to-indigo-900 border border-purple-500/50',
+      };
+    } else {
+      alert('Invalid badge code. Use 400 for NOOB or 600 for TUFF.');
+      return;
+    }
+
+    try {
+      const targetRef = ref(database, `users/${grantTargetUser}/profile`);
+      await update(targetRef, badgeData);
+      await fetchUsersAndProfiles();
+      alert(`Badge successfully granted to @${grantTargetUser}!`);
+      setGrantTargetUser('');
+      setBadgeCodeInput('');
+      setShowGrantBadgeModal(false);
+    } catch (err) {
+      console.error('Error granting badge:', err);
+    }
   };
 
   const displayedMessages = rawMessages.filter((msg) => {
@@ -313,6 +385,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       </div>
     );
   };
+
+  const typingUserNames = Object.keys(typingUsers);
 
   if (!currentUser) {
     return (
@@ -567,7 +641,6 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* CHANNEL MENU (3-DOTS) TO HIDE GC */}
             <div className="relative">
               <button
                 onClick={() => setShowChannelMenu((prev) => !prev)}
@@ -635,6 +708,9 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               const isSelf = msg.sender === currentUser;
               const isMenuOpen = activeMessageMenuId === msg.id;
 
+              const readUsers = Object.keys(msg.readBy || {}).filter((u) => u !== msg.sender);
+              const isRead = readUsers.length > 0;
+
               return (
                 <div
                   key={msg.id}
@@ -661,7 +737,6 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                         {renderDiscordBadge(msg.sender)}
                       </div>
 
-                      {/* 3-DOTS OPTIONS TRIGGER FOR MOBILE & PC */}
                       <div className="relative">
                         <button
                           onClick={() =>
@@ -672,7 +747,6 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                           <MoreVertical className="h-3.5 w-3.5" />
                         </button>
 
-                        {/* MESSAGE OPTIONS MENU */}
                         {isMenuOpen && (
                           <div
                             className={`absolute z-30 w-36 rounded-xl border border-slate-800 bg-[#1f2c34] p-1 shadow-xl top-6 ${
@@ -689,13 +763,12 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                               <Pin className="h-3.5 w-3.5 text-emerald-400" /> Pin Message
                             </button>
 
-                            {/* FOUNDER DELETE OPTION */}
-                            {isCurrentFounder && (
+                            {(isSelf || isCurrentFounder) && (
                               <button
-                                onClick={() => handleFounderDeleteMessage(msg.id)}
+                                onClick={() => handleDeleteMessage(msg.id)}
                                 className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-red-400 hover:bg-red-500/10"
                               >
-                                <Trash2 className="h-3.5 w-3.5" /> Remove (Founder)
+                                <Trash2 className="h-3.5 w-3.5" /> Delete
                               </button>
                             )}
                           </div>
@@ -714,14 +787,34 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                         {msg.time}
                       </span>
                       {isSelf && (
-                        <CheckCheck className="h-3.5 w-3.5 text-sky-400" />
+                        <CheckCheck className={`h-3.5 w-3.5 ${isRead ? 'text-sky-400' : 'text-slate-400'}`} />
                       )}
                     </div>
                   </div>
+
+                  {isSelf && isRead && (
+                    <div className="text-[10px] text-slate-400/80 mt-0.5 px-1 font-medium">
+                      Seen by {msg.receiver === 'general' ? readUsers.join(', ') : msg.receiver}
+                    </div>
+                  )}
                 </div>
               );
             })
           )}
+
+          {typingUserNames.length > 0 && (
+            <div className="flex items-center gap-2 text-slate-400 text-xs italic px-2 py-1">
+              <span className="flex items-center gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse delay-100" />
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse delay-200" />
+              </span>
+              <span>
+                {typingUserNames.join(', ')} {typingUserNames.length === 1 ? 'is' : 'are'} typing...
+              </span>
+            </div>
+          )}
+
           <div ref={messagesEndRef} />
         </div>
 
@@ -731,7 +824,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
             <input
               type="text"
               value={inputMessage}
-              onChange={(e) => setInputMessage(e.target.value)}
+              onChange={handleInputChange}
               placeholder={
                 activeChannel === 'general'
                   ? 'Type a message in #general-chat'
@@ -750,7 +843,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         </div>
       </main>
 
-      {/* SETTINGS MODAL (UNHIDE CHANNELS & FOUNDER GRANT BADGES) */}
+      {/* SETTINGS MODAL */}
       {showSettingsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4">
           <div className="w-full max-w-sm rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl relative text-slate-100">
@@ -795,48 +888,93 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               )}
             </div>
 
-            {/* FOUNDER GRANT BADGES PANEL */}
+            {/* FOUNDER PANEL OPTION */}
             {isCurrentFounder && (
               <div className="border-t border-slate-800 pt-5">
-                <div className="flex items-center gap-2 mb-3">
-                  <Crown className="h-4 w-4 text-amber-400" />
-                  <span className="text-xs font-bold text-amber-400 uppercase tracking-wider">
-                    Grant Badges (Founder Panel)
-                  </span>
-                </div>
-
-                <form onSubmit={handleGrantBadgeSubmit} className="space-y-3">
-                  <select
-                    value={grantTargetUser}
-                    onChange={(e) => setGrantTargetUser(e.target.value)}
-                    className="w-full rounded-xl border border-slate-700 bg-[#2a3942] px-3 py-2 text-xs text-white focus:outline-none"
-                  >
-                    <option value="">-- Select User --</option>
-                    {availableUsersToMessage.map((user) => (
-                      <option key={user} value={user}>
-                        {user}
-                      </option>
-                    ))}
-                  </select>
-
-                  <input
-                    type="text"
-                    placeholder="Enter Badge Number Code"
-                    value={badgeCodeInput}
-                    onChange={(e) => setBadgeCodeInput(e.target.value)}
-                    className="w-full rounded-xl border border-slate-700 bg-[#2a3942] px-3 py-2 text-xs text-white focus:outline-none"
-                  />
-
-                  <button
-                    type="submit"
-                    disabled={!grantTargetUser || !badgeCodeInput.trim()}
-                    className="w-full rounded-xl bg-amber-600 py-2 text-xs font-bold text-white hover:bg-amber-500 disabled:opacity-50"
-                  >
-                    Grant Badge
-                  </button>
-                </form>
+                <button
+                  onClick={() => {
+                    fetchUsersAndProfiles();
+                    setShowGrantBadgeModal(true);
+                  }}
+                  className="w-full flex items-center justify-between rounded-xl bg-amber-600/10 border border-amber-500/30 px-4 py-3 text-xs font-bold text-amber-400 hover:bg-amber-600 hover:text-white transition-all shadow-md"
+                >
+                  <div className="flex items-center gap-2">
+                    <Award className="h-4 w-4" />
+                    <span>Grant user badges</span>
+                  </div>
+                  <Crown className="h-4 w-4" />
+                </button>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* GRANT BADGE MODAL FOR FOUNDER */}
+      {showGrantBadgeModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4">
+          <div className="w-full max-w-sm rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl relative text-slate-100">
+            <button
+              onClick={() => setShowGrantBadgeModal(false)}
+              className="absolute right-4 top-4 rounded-full p-2 text-slate-400 hover:bg-slate-700 hover:text-white"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <div className="flex items-center gap-2.5 mb-4">
+              <Crown className="h-5 w-5 text-amber-400" />
+              <h3 className="text-base font-bold text-white">Grant User Badges</h3>
+            </div>
+
+            <form onSubmit={handleGrantBadgeSubmit} className="space-y-4">
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Select User
+                </label>
+                <select
+                  value={grantTargetUser}
+                  onChange={(e) => setGrantTargetUser(e.target.value)}
+                  className="w-full rounded-xl border border-slate-700 bg-[#2a3942] px-3.5 py-2.5 text-xs text-white focus:outline-none focus:border-amber-500"
+                >
+                  <option value="">-- Select User --</option>
+                  {availableUsersToMessage.map((user) => (
+                    <option key={user} value={user}>
+                      {user}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Badge Code (400 = Noob, 600 = Tuff)
+                </label>
+                <input
+                  type="text"
+                  placeholder="Enter code (400 or 600)"
+                  value={badgeCodeInput}
+                  onChange={(e) => setBadgeCodeInput(e.target.value)}
+                  className="w-full rounded-xl border border-slate-700 bg-[#2a3942] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div className="flex items-center gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowGrantBadgeModal(false)}
+                  className="flex-1 rounded-xl bg-slate-800 py-2.5 text-xs font-bold text-slate-300 hover:bg-slate-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!grantTargetUser || !badgeCodeInput.trim()}
+                  className="flex-1 rounded-xl bg-amber-600 py-2.5 text-xs font-bold text-white hover:bg-amber-500 disabled:opacity-50 transition-colors shadow-lg"
+                >
+                  Grant Badge
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
