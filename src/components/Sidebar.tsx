@@ -11,11 +11,12 @@ import {
   Menu,
   X,
   GraduationCap,
+  Sparkles,
 } from 'lucide-react';
 import { units, type UnitId } from '@/data/biology';
 import type { LucideIcon } from 'lucide-react';
 
-export type TabId = 'notes' | 'flashcards' | 'mcq';
+export type TabId = 'notes' | 'flashcards' | 'mcq' | 'ai';
 
 interface SidebarProps {
   activeTab: TabId;
@@ -28,6 +29,7 @@ const tabItems: { id: TabId; label: string; icon: LucideIcon }[] = [
   { id: 'notes', label: 'Notes', icon: BookOpen },
   { id: 'flashcards', label: 'Flashcards', icon: Layers },
   { id: 'mcq', label: 'MCQ Practice', icon: ClipboardList },
+  { id: 'ai', label: 'AI Tutor', icon: Sparkles },
 ];
 
 const unitIcons: Record<UnitId, LucideIcon> = {
@@ -153,7 +155,7 @@ export default function Sidebar({ activeTab, onTabChange, selectedUnit, onUnitCh
         <div className="rounded-2xl border border-emerald-100 bg-gradient-to-br from-emerald-50 to-teal-50 p-4">
           <p className="text-xs font-bold text-emerald-800">High-Yield NCERT</p>
           <p className="mt-1 text-[11px] leading-relaxed text-emerald-700/80">
-            Focused revision notes, flashcards & NEET-pattern MCQs across all Class 11 Biology units.
+            Focused revision notes, flashcards, MCQs & Gemini AI assistance across Class 11 Biology.
           </p>
         </div>
       </div>
