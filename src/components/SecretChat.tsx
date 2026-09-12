@@ -79,6 +79,9 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showGrantBadgeModal, setShowGrantBadgeModal] = useState(false);
 
+  // Participants sidebar state
+  const [showParticipants, setShowParticipants] = useState(false);
+
   // Message Options dropdown state
   const [activeMessageMenuId, setActiveMessageMenuId] = useState<string | null>(null);
 
@@ -156,7 +159,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     return () => unsubscribe();
   }, [currentUser, activeChannel]);
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInputMessage(e.target.value);
 
     if (!currentUser) return;
@@ -171,6 +174,13 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     typingTimeoutRef.current = setTimeout(() => {
       set(userTypingRef, false);
     }, 2000);
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
   };
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -189,6 +199,24 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     setSelectedImage(null);
     setImagePreview(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handlePasteImage = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          e.preventDefault();
+          setSelectedImage(file);
+          setImagePreview(URL.createObjectURL(file));
+        }
+        break;
+      }
+    }
   };
 
   const uploadImageToImgBB = async (file: File): Promise<string> => {
@@ -320,8 +348,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     return () => unsubscribe();
   }, [currentUser, activeChannel]);
 
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSendMessage = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if ((!inputMessage.trim() && !selectedImage) || !currentUser) return;
 
     const userTypingRef = ref(database, `typing/${activeChannel}/${currentUser}`);
@@ -341,7 +369,6 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       setIsUploadingImage(false);
     }
 
-    // Clean replyTo context so undefined properties are omitted completely
     let sanitizedReplyTo: ReplyContext | null = null;
     if (replyingTo) {
       sanitizedReplyTo = {
@@ -437,7 +464,6 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     }
   };
 
-  // Swipe-to-reply touch handlers
   const handleTouchStart = (e: React.TouchEvent) => {
     touchStartXRef.current = e.touches[0].clientX;
   };
@@ -467,6 +493,14 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       (msg.sender === activeChannel && msg.receiver === currentUser)
     );
   });
+
+  // Calculate the single last seen message ID for current user
+  const selfReadMessages = displayedMessages.filter((msg) => {
+    if (msg.sender !== currentUser) return false;
+    const readUsers = Object.keys(msg.readBy || {}).filter((u) => u !== msg.sender);
+    return readUsers.length > 0;
+  });
+  const lastSeenMsgId = selfReadMessages.length > 0 ? selfReadMessages[selfReadMessages.length - 1].id : null;
 
   const pinnedMessage = rawMessages.find((m) => m.id === pinnedMessageId);
 
@@ -503,6 +537,33 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         {uname.slice(0, 2).toUpperCase()}
       </div>
     );
+  };
+
+  const isSameDay = (t1: number, t2: number) => {
+    const d1 = new Date(t1);
+    const d2 = new Date(t2);
+    return (
+      d1.getFullYear() === d2.getFullYear() &&
+      d1.getMonth() === d2.getMonth() &&
+      d1.getDate() === d2.getDate()
+    );
+  };
+
+  const formatDateDivider = (timestamp: number) => {
+    const msgDate = new Date(timestamp);
+    const today = new Date();
+    const yesterday = new Date();
+    yesterday.setDate(today.getDate() - 1);
+
+    if (isSameDay(timestamp, today.getTime())) return 'Today';
+    if (isSameDay(timestamp, yesterday.getTime())) return 'Yesterday';
+
+    return msgDate.toLocaleDateString([], {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'long',
+      year: msgDate.getFullYear() !== today.getFullYear() ? 'numeric' : undefined,
+    });
   };
 
   const typingUserNames = Object.keys(typingUsers);
@@ -609,6 +670,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
   const isCurrentFounder = userProfiles[currentUser]?.isFounder;
   const availableUsersToMessage = allUsers.filter((u) => u !== currentUser);
+  const onlineParticipants = allUsers.filter((u) => onlineUsers[u]);
+  const offlineParticipants = allUsers.filter((u) => !onlineUsers[u]);
   const activeConversations = conversations.filter((ch) => !hiddenChannels.includes(ch));
   const isGeneralHidden = hiddenChannels.includes('general');
 
@@ -760,6 +823,21 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={() => {
+                if (!showParticipants) fetchUsersAndProfiles();
+                setShowParticipants((prev) => !prev);
+              }}
+              title="Toggle participants"
+              className={`p-2 rounded-xl transition-colors ${
+                showParticipants
+                  ? 'bg-[#2a3942] text-emerald-400'
+                  : 'text-slate-400 hover:bg-slate-700 hover:text-white'
+              }`}
+            >
+              <Users className="h-5 w-5" />
+            </button>
+
             <div className="relative">
               <button
                 onClick={() => setShowChannelMenu((prev) => !prev)}
@@ -818,27 +896,41 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         )}
 
         {/* MESSAGES LIST */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-4 bg-[#0b141a]">
+        <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-[#0b141a]">
           {displayedMessages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center text-slate-500">
               <MessageSquare className="h-10 w-10 mb-2 opacity-30" />
               <p className="text-xs">No messages yet. Send a message to start chatting!</p>
             </div>
           ) : (
-            displayedMessages.map((msg) => {
+            displayedMessages.map((msg, idx) => {
               const isSelf = msg.sender === currentUser;
               const isMenuOpen = activeMessageMenuId === msg.id;
 
               const readUsers = Object.keys(msg.readBy || {}).filter((u) => u !== msg.sender);
               const isRead = readUsers.length > 0;
 
+              // Check if previous message exists and has the same sender
+              const prevMsg = idx > 0 ? displayedMessages[idx - 1] : null;
+              const showDateDivider = !prevMsg || !isSameDay(prevMsg.timestamp, msg.timestamp);
+              const isSequence = !!prevMsg && prevMsg.sender === msg.sender && !showDateDivider;
+
               return (
+                <React.Fragment key={msg.id}>
+                {showDateDivider && (
+                  <div className="flex items-center justify-center my-4">
+                    <span className="rounded-lg bg-[#182229] px-3 py-1.5 text-[11px] font-semibold text-slate-300 shadow-sm uppercase tracking-wide">
+                      {formatDateDivider(msg.timestamp)}
+                    </span>
+                  </div>
+                )}
                 <div
-                  key={msg.id}
                   id={`msg-${msg.id}`}
                   onTouchStart={handleTouchStart}
                   onTouchEnd={(e) => handleTouchEnd(e, msg)}
-                  className={`flex flex-col ${isSelf ? 'items-end' : 'items-start'} relative group transition-transform duration-200`}
+                  className={`flex flex-col ${isSelf ? 'items-end' : 'items-start'} relative group transition-transform duration-200 ${
+                    isSequence ? 'mt-1' : 'mt-3'
+                  }`}
                 >
                   <div
                     className={`max-w-[85%] sm:max-w-[65%] rounded-2xl px-3.5 py-2 shadow-sm text-sm relative ${
@@ -847,24 +939,78 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                         : 'bg-[#202c33] text-[#e9edef] rounded-tl-none'
                     }`}
                   >
-                    {/* SENDER HEADER */}
-                    <div className="flex items-center justify-between border-b border-slate-700/40 pb-1 mb-1.5 gap-4">
-                      <div className="flex items-center gap-2">
-                        {renderAvatar(msg.sender, 'h-5 w-5')}
-                        <span
-                          onClick={() => setInspectingUser(msg.sender)}
-                          className="text-xs font-bold text-emerald-400 hover:underline cursor-pointer"
-                        >
-                          {msg.sender}
-                        </span>
-                        {renderDiscordBadge(msg.sender)}
-                      </div>
+                    {/* SENDER HEADER - Rendered only on the first message of a consecutive series */}
+                    {!isSequence ? (
+                      <div className="flex items-center justify-between border-b border-slate-700/40 pb-1 mb-1.5 gap-4">
+                        <div className="flex items-center gap-2">
+                          {renderAvatar(msg.sender, 'h-5 w-5')}
+                          <span
+                            onClick={() => setInspectingUser(msg.sender)}
+                            className="text-xs font-bold text-emerald-400 hover:underline cursor-pointer"
+                          >
+                            {msg.sender}
+                          </span>
+                          {renderDiscordBadge(msg.sender)}
+                        </div>
 
-                      <div className="relative">
+                        <div className="relative">
+                          <button
+                            onClick={() =>
+                              setActiveMessageMenuId(isMenuOpen ? null : msg.id)
+                            }
+                            className="p-1 rounded text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
+                          >
+                            <MoreVertical className="h-3.5 w-3.5" />
+                          </button>
+
+                          {isMenuOpen && (
+                            <div
+                              className={`absolute z-30 w-36 rounded-xl border border-slate-800 bg-[#1f2c34] p-1 shadow-xl top-6 ${
+                                isSelf ? 'right-0' : 'left-0'
+                              }`}
+                            >
+                              <button
+                                onClick={() => {
+                                  setReplyingTo({
+                                    id: msg.id,
+                                    sender: msg.sender,
+                                    text: msg.text || (msg.imageUrl ? '📷 Photo' : ''),
+                                    imageUrl: msg.imageUrl,
+                                  });
+                                  setActiveMessageMenuId(null);
+                                }}
+                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700/70"
+                              >
+                                <Reply className="h-3.5 w-3.5 text-emerald-400" /> Reply
+                              </button>
+
+                              <button
+                                onClick={() => {
+                                  setPinnedMessageId(msg.id);
+                                  setActiveMessageMenuId(null);
+                                }}
+                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700/70"
+                              >
+                                <Pin className="h-3.5 w-3.5 text-emerald-400" /> Pin Message
+                              </button>
+
+                              {(isSelf || isCurrentFounder) && (
+                                <button
+                                  onClick={() => handleDeleteMessage(msg.id)}
+                                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-red-400 hover:bg-red-500/10"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" /> Delete
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      /* Minimal Dropdown for grouped messages */
+                      <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
-                          onClick={() =>
-                            setActiveMessageMenuId(isMenuOpen ? null : msg.id)
-                          }
+                          onClick={() => setActiveMessageMenuId(isMenuOpen ? null : msg.id)}
                           className="p-1 rounded text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
                         >
                           <MoreVertical className="h-3.5 w-3.5" />
@@ -912,7 +1058,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                           </div>
                         )}
                       </div>
-                    </div>
+                    )}
 
                     {/* REPLY PREVIEW IN BUBBLE */}
                     {msg.replyTo && (
@@ -964,12 +1110,14 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                     </div>
                   </div>
 
-                  {isSelf && isRead && (
+                  {/* Single "Seen" display on the last seen message only */}
+                  {isSelf && msg.id === lastSeenMsgId && (
                     <div className="text-[10px] text-slate-400/80 mt-0.5 px-1 font-medium">
                       Seen by {msg.receiver === 'general' ? readUsers.join(', ') : msg.receiver}
                     </div>
                   )}
                 </div>
+                </React.Fragment>
               );
             })
           )}
@@ -1025,7 +1173,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
             </div>
           )}
 
-          <form onSubmit={handleSendMessage} className="flex items-center gap-2 max-w-5xl mx-auto">
+          <form onSubmit={handleSendMessage} className="flex items-end gap-2 max-w-5xl mx-auto">
             {/* HIDDEN FILE INPUT */}
             <input
               type="file"
@@ -1044,16 +1192,19 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               <ImageIcon className="h-5 w-5" />
             </button>
 
-            <input
-              type="text"
+            {/* MULTI-LINE TEXTAREA INPUT */}
+            <textarea
+              rows={1}
               value={inputMessage}
               onChange={handleInputChange}
+              onKeyDown={handleKeyDown}
+              onPaste={handlePasteImage}
               placeholder={
                 activeChannel === 'general'
-                  ? 'Type a message in #general-chat'
-                  : `Message @${activeChannel}`
+                  ? 'Type a message (Shift+Enter for new line)'
+                  : `Message @${activeChannel} (Shift+Enter for new line)`
               }
-              className="flex-1 rounded-xl bg-[#2a3942] px-4 py-3 text-sm text-[#d1d7db] placeholder-[#8696a0] outline-none focus:ring-1 focus:ring-emerald-500"
+              className="flex-1 max-h-32 min-h-[44px] resize-none rounded-xl bg-[#2a3942] px-4 py-3 text-sm text-[#d1d7db] placeholder-[#8696a0] outline-none focus:ring-1 focus:ring-emerald-500"
             />
 
             <button
@@ -1070,6 +1221,91 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           </form>
         </div>
       </main>
+
+      {/* PARTICIPANTS SIDEBAR */}
+      {showParticipants && (
+        <aside className="w-64 shrink-0 flex flex-col border-l border-slate-800 bg-[#111b21]">
+          <div className="flex items-center justify-between border-b border-slate-800 bg-[#202c33] px-4 py-3.5">
+            <div>
+              <h4 className="text-xs font-bold text-slate-100">Participants</h4>
+              <p className="text-[10px] text-slate-400">{allUsers.length} members</p>
+            </div>
+            <button
+              onClick={() => setShowParticipants(false)}
+              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-3 space-y-5">
+            {/* ONLINE MEMBERS */}
+            <div>
+              <span className="block px-1 text-[10px] font-extrabold tracking-wider text-emerald-400 uppercase mb-1.5">
+                Online — {onlineParticipants.length}
+              </span>
+              {onlineParticipants.length === 0 ? (
+                <p className="px-1 text-[11px] text-slate-500 italic">No one online.</p>
+              ) : (
+                <div className="space-y-0.5">
+                  {onlineParticipants.map((u) => (
+                    <button
+                      key={u}
+                      onClick={() => setInspectingUser(u)}
+                      className="w-full flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-[#202c33] transition-colors text-left"
+                    >
+                      <div className="relative shrink-0">
+                        {renderAvatar(u, 'h-8 w-8')}
+                        <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-[#111b21]" />
+                      </div>
+                      <div className="overflow-hidden flex-1 min-w-0">
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-semibold text-slate-100 truncate">
+                            {u}
+                            {u === currentUser && (
+                              <span className="text-slate-500 font-normal"> (you)</span>
+                            )}
+                          </span>
+                        </div>
+                        {renderDiscordBadge(u) && <div className="mt-1">{renderDiscordBadge(u)}</div>}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* OFFLINE MEMBERS */}
+            <div>
+              <span className="block px-1 text-[10px] font-extrabold tracking-wider text-slate-500 uppercase mb-1.5">
+                Offline — {offlineParticipants.length}
+              </span>
+              {offlineParticipants.length === 0 ? (
+                <p className="px-1 text-[11px] text-slate-500 italic">Everyone is online.</p>
+              ) : (
+                <div className="space-y-0.5">
+                  {offlineParticipants.map((u) => (
+                    <button
+                      key={u}
+                      onClick={() => setInspectingUser(u)}
+                      className="w-full flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-[#202c33] transition-colors text-left opacity-50 hover:opacity-80"
+                    >
+                      <div className="relative shrink-0">
+                        {renderAvatar(u, 'h-8 w-8')}
+                        <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-slate-600 ring-2 ring-[#111b21]" />
+                      </div>
+                      <div className="overflow-hidden flex-1 min-w-0">
+                        <span className="text-xs font-semibold text-slate-400 truncate block">{u}</span>
+                        {renderDiscordBadge(u) && <div className="mt-1">{renderDiscordBadge(u)}</div>}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </aside>
+      )}
 
       {/* FULL IMAGE EXPAND LIGHTBOX MODAL */}
       {expandedImageUrl && (
