@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Send, Hash, Lock, LogOut, Power, Plus, UserPlus, LogIn, 
-  ShieldAlert, Users, MessageSquare, CheckCheck, Trash2, 
-  MoreVertical, Pin, Settings, Eye, Crown, X, Award, 
-  Image as ImageIcon, Reply, Loader2, ArrowLeft 
+import {
+  Send, Hash, Lock, LogOut, Power, Plus, UserPlus, LogIn,
+  ShieldAlert, Users, MessageSquare, CheckCheck, Trash2,
+  MoreVertical, Pin, Settings, Eye, Crown, X, Award,
+  Image as ImageIcon, Reply, Loader2, ArrowLeft, Pencil, Check,
+  ChevronDown, ChevronRight, Info, UserMinus, Search, Smile, Copy
 } from 'lucide-react';
 import { database } from '@/lib/firebase';
 import { ref, push, onValue, get, set, onDisconnect, update, remove } from 'firebase/database';
@@ -30,9 +31,32 @@ interface ChatMessage {
   timestamp: number;
   readBy?: Record<string, boolean>;
   replyTo?: ReplyContext;
+  edited?: boolean;
+  editedAt?: number;
+}
+
+interface GroupChat {
+  id: string;
+  name: string;
+  emoji: string;
+  createdBy: string;
+  createdAt: number;
+  members: Record<string, boolean>;
 }
 
 const IMGBB_API_KEY = '9e341096967527234e9d141032f6a8c5';
+
+/* Group chats are stored in the DB at `groups/{id}`.
+   Messages that belong to a group use the channel key `gc_{groupId}`
+   inside the message's `receiver` field, so DMs / general / groups all
+   travel through the same message pipeline. */
+const GROUP_PREFIX = 'gc_';
+const EDIT_WINDOW_MS = 15 * 60 * 1000; // messages can only be edited for 15 minutes
+const GROUP_EMOJIS = ['👥', '🔥', '🎮', '📚', '🧠', '🎵', '⚽', '🍕', '💀', '🌈', '🧪', '🐧'];
+
+const isGroupKey = (channelKey: string) => channelKey.startsWith(GROUP_PREFIX);
+const groupChannelKey = (groupId: string) => `${GROUP_PREFIX}${groupId}`;
+const groupIdFromChannel = (channelKey: string) => channelKey.slice(GROUP_PREFIX.length);
 
 export default function SecretChat({ onClose }: SecretChatProps) {
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
@@ -48,9 +72,22 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
   const [activeChannel, setActiveChannel] = useState<string>('general');
   const [allUsers, setAllUsers] = useState<string[]>([]);
-  const [conversations, setConversations] = useState<string[]>([]);
+  const [messagePartners, setMessagePartners] = useState<string[]>([]);
+  const [manualConversations, setManualConversations] = useState<string[]>([]);
   const [rawMessages, setRawMessages] = useState<ChatMessage[]>([]);
   const [inputMessage, setInputMessage] = useState('');
+
+  // Group chats
+  const [groups, setGroups] = useState<Record<string, GroupChat>>({});
+  const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupEmoji, setNewGroupEmoji] = useState('👥');
+  const [newGroupMembers, setNewGroupMembers] = useState<string[]>([]);
+  const [groupMemberSearch, setGroupMemberSearch] = useState('');
+  const [showGroupInfo, setShowGroupInfo] = useState(false);
+  const [groupNameDraft, setGroupNameDraft] = useState('');
+  const [groupEmojiDraft, setGroupEmojiDraft] = useState('👥');
+  const [memberToAdd, setMemberToAdd] = useState('');
 
   // Image Upload State
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
@@ -61,6 +98,10 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
   // Reply State
   const [replyingTo, setReplyingTo] = useState<ReplyContext | null>(null);
+
+  // Edit State (own messages, 15 minute window)
+  const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
 
   // Swipe Gesture Ref/State
   const touchStartXRef = useRef<number | null>(null);
@@ -86,12 +127,19 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   // Desktop (md+) ignores this and shows the relevant panels side by side.
   const [mobilePanel, setMobilePanel] = useState<'list' | 'chat' | 'participants'>('list');
 
+  // Sidebar collapsible sections (Discord style)
+  const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
+
   // Message Options dropdown state
   const [activeMessageMenuId, setActiveMessageMenuId] = useState<string | null>(null);
 
+  // Popover refs so "click anywhere" can dismiss them
+  const messageMenuRef = useRef<HTMLDivElement | null>(null);
+  const channelMenuRef = useRef<HTMLDivElement | null>(null);
+
   // Typing indicators state
   const [typingUsers, setTypingUsers] = useState<Record<string, boolean>>({});
-  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Grant Badge Form state
   const [grantTargetUser, setGrantTargetUser] = useState('');
@@ -99,13 +147,29 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  // Keeps the latest active channel available inside firebase listeners
+  const activeChannelRef = useRef<string>(activeChannel);
+  useEffect(() => {
+    activeChannelRef.current = activeChannel;
+  }, [activeChannel]);
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
   useEffect(() => {
     scrollToBottom();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rawMessages, activeChannel, typingUsers]);
+
+  /* ------------------------------------------------------------------ */
+  /* Ticking clock: lets the "Edit" option vanish the moment the        */
+  /* 15 minute window closes, without needing any user interaction.     */
+  /* ------------------------------------------------------------------ */
+  useEffect(() => {
+    const interval = setInterval(() => setNowTick(Date.now()), 15000);
+    return () => clearInterval(interval);
+  }, []);
 
   const fetchUsersAndProfiles = async () => {
     try {
@@ -143,6 +207,44 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     return () => unsubscribePresence();
   }, [currentUser]);
 
+  /* ------------------------------------------------------------------ */
+  /* GROUP CHAT LISTENER (only groups the current user is a member of)  */
+  /* ------------------------------------------------------------------ */
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const groupsRef = ref(database, 'groups');
+    const unsubscribeGroups = onValue(groupsRef, (snapshot) => {
+      const data = snapshot.val() || {};
+      const mine: Record<string, GroupChat> = {};
+
+      Object.entries(data).forEach(([id, val]: [string, any]) => {
+        if (val && val.members && val.members[currentUser]) {
+          mine[id] = {
+            id,
+            name: val.name || 'Group Chat',
+            emoji: val.emoji || '👥',
+            createdBy: val.createdBy || '',
+            createdAt: val.createdAt || 0,
+            members: val.members || {},
+          };
+        }
+      });
+
+      setGroups(mine);
+
+      // If the group that is currently open got deleted, or we were removed
+      // from it, fall back to the general channel.
+      const openChannel = activeChannelRef.current;
+      if (isGroupKey(openChannel) && !mine[groupIdFromChannel(openChannel)]) {
+        setActiveChannel('general');
+        setShowGroupInfo(false);
+      }
+    });
+
+    return () => unsubscribeGroups();
+  }, [currentUser]);
+
   useEffect(() => {
     if (!currentUser) return;
 
@@ -162,6 +264,65 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
     return () => unsubscribe();
   }, [currentUser, activeChannel]);
+
+  /* ------------------------------------------------------------------ */
+  /* CLICK ANYWHERE -> DISMISS OPEN POPUPS (dropdowns)                   */
+  /* ------------------------------------------------------------------ */
+  useEffect(() => {
+    if (!activeMessageMenuId) return;
+
+    const handleOutsideClick = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node | null;
+      if (messageMenuRef.current && target && messageMenuRef.current.contains(target)) return;
+      setActiveMessageMenuId(null);
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('touchstart', handleOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('touchstart', handleOutsideClick);
+    };
+  }, [activeMessageMenuId]);
+
+  useEffect(() => {
+    if (!showChannelMenu) return;
+
+    const handleOutsideClick = (event: MouseEvent | TouchEvent) => {
+      const target = event.target as Node | null;
+      if (channelMenuRef.current && target && channelMenuRef.current.contains(target)) return;
+      setShowChannelMenu(false);
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('touchstart', handleOutsideClick);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('touchstart', handleOutsideClick);
+    };
+  }, [showChannelMenu]);
+
+  // ESC also closes whatever popup is open
+  useEffect(() => {
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (activeMessageMenuId) {
+        setActiveMessageMenuId(null);
+      } else if (showChannelMenu) {
+        setShowChannelMenu(false);
+      } else if (editingMessage) {
+        cancelEditing();
+      } else if (replyingTo) {
+        setReplyingTo(null);
+      } else if (expandedImageUrl) {
+        setExpandedImageUrl(null);
+      }
+    };
+
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMessageMenuId, showChannelMenu, editingMessage, replyingTo, expandedImageUrl]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInputMessage(e.target.value);
@@ -206,6 +367,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   };
 
   const handlePasteImage = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    if (editingMessage) return;
+
     const items = e.clipboardData?.items;
     if (!items) return;
 
@@ -299,6 +462,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     }
     localStorage.removeItem('secret_chat_user');
     setCurrentUser(null);
+    setActiveChannel('general');
+    setManualConversations([]);
   };
 
   useEffect(() => {
@@ -320,23 +485,28 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           timestamp: value.timestamp || 0,
           readBy: value.readBy || {},
           replyTo: value.replyTo || undefined,
+          edited: value.edited || false,
+          editedAt: value.editedAt || 0,
         }));
 
         setRawMessages(loaded);
 
         const dmUsers = new Set<string>();
         loaded.forEach((msg) => {
-          if (msg.receiver !== 'general') {
-            if (msg.sender === currentUser) dmUsers.add(msg.receiver);
-            if (msg.receiver === currentUser) dmUsers.add(msg.sender);
-          }
+          if (msg.receiver === 'general' || isGroupKey(msg.receiver)) return;
+          if (msg.sender === currentUser) dmUsers.add(msg.receiver);
+          if (msg.receiver === currentUser) dmUsers.add(msg.sender);
         });
-        setConversations(Array.from(dmUsers));
+        setMessagePartners(Array.from(dmUsers));
 
         loaded.forEach((msg) => {
           const isRelevantChannel =
             (msg.receiver === 'general' && activeChannel === 'general') ||
-            (msg.receiver === currentUser && msg.sender === activeChannel);
+            (isGroupKey(activeChannel) && msg.receiver === activeChannel) ||
+            (!isGroupKey(activeChannel) &&
+              activeChannel !== 'general' &&
+              msg.receiver === currentUser &&
+              msg.sender === activeChannel);
 
           if (isRelevantChannel && msg.sender !== currentUser && !msg.readBy?.[currentUser]) {
             update(ref(database, `messages/${msg.id}/readBy`), {
@@ -346,18 +516,54 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         });
       } else {
         setRawMessages([]);
+        setMessagePartners([]);
       }
     });
 
     return () => unsubscribe();
   }, [currentUser, activeChannel]);
 
+  /* ------------------------------------------------------------------ */
+  /* SEND / EDIT MESSAGES                                               */
+  /* ------------------------------------------------------------------ */
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if ((!inputMessage.trim() && !selectedImage) || !currentUser) return;
+    if (!currentUser) return;
 
     const userTypingRef = ref(database, `typing/${activeChannel}/${currentUser}`);
     set(userTypingRef, false);
+
+    /* ---------- EDITING AN EXISTING MESSAGE ---------- */
+    if (editingMessage) {
+      const trimmed = inputMessage.trim();
+      if (!trimmed) return;
+
+      const withinWindow = Date.now() - editingMessage.timestamp < EDIT_WINDOW_MS;
+      if (editingMessage.sender !== currentUser || !withinWindow) {
+        alert('This message can no longer be edited (15 minute limit).');
+        cancelEditing();
+        return;
+      }
+
+      try {
+        await update(ref(database, `messages/${editingMessage.id}`), {
+          text: trimmed,
+          edited: true,
+          editedAt: Date.now(),
+        });
+        setNowTick(Date.now());
+      } catch (err) {
+        console.error('Error editing message:', err);
+        alert('Could not edit the message. Please try again.');
+        return;
+      }
+
+      cancelEditing();
+      return;
+    }
+
+    /* ---------- SENDING A NEW MESSAGE ---------- */
+    if (!inputMessage.trim() && !selectedImage) return;
 
     let uploadedUrl = '';
     if (selectedImage) {
@@ -407,10 +613,30 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     }
   };
 
+  const startEditing = (msg: ChatMessage) => {
+    setEditingMessage(msg);
+    setInputMessage(msg.text || '');
+    setReplyingTo(null);
+    cancelImageSelection();
+    setActiveMessageMenuId(null);
+  };
+
+  const cancelEditing = () => {
+    setEditingMessage(null);
+    setInputMessage('');
+  };
+
+  const canEditMessage = (msg: ChatMessage) =>
+    msg.sender === currentUser && nowTick - msg.timestamp < EDIT_WINDOW_MS;
+
+  const editMinutesLeft = (msg: ChatMessage) =>
+    Math.max(0, Math.ceil((EDIT_WINDOW_MS - (nowTick - msg.timestamp)) / 60000));
+
   const handleDeleteMessage = async (msgId: string) => {
     try {
       await remove(ref(database, `messages/${msgId}`));
       if (pinnedMessageId === msgId) setPinnedMessageId(null);
+      if (editingMessage?.id === msgId) cancelEditing();
       setActiveMessageMenuId(null);
     } catch (err) {
       console.error('Error deleting message:', err);
@@ -488,9 +714,150 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     touchStartXRef.current = null;
   };
 
+  /* ------------------------------------------------------------------ */
+  /* GROUP CHAT ACTIONS                                                 */
+  /* ------------------------------------------------------------------ */
+  const resetGroupDraft = () => {
+    setNewGroupName('');
+    setNewGroupEmoji('👥');
+    setNewGroupMembers([]);
+    setGroupMemberSearch('');
+  };
+
+  const toggleNewGroupMember = (user: string) => {
+    setNewGroupMembers((prev) =>
+      prev.includes(user) ? prev.filter((u) => u !== user) : [...prev, user]
+    );
+  };
+
+  const handleCreateGroup = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser) return;
+
+    const name = newGroupName.trim();
+    if (!name) {
+      alert('Give your group a name first.');
+      return;
+    }
+
+    const members: Record<string, boolean> = { [currentUser]: true };
+    newGroupMembers.forEach((u) => {
+      members[u] = true;
+    });
+
+    if (Object.keys(members).length < 2) {
+      alert('Pick at least one other member to create a group.');
+      return;
+    }
+
+    try {
+      const groupsRef = ref(database, 'groups');
+      const newGroupRef = push(groupsRef);
+      const groupId = newGroupRef.key as string;
+
+      await set(newGroupRef, {
+        name,
+        emoji: newGroupEmoji,
+        createdBy: currentUser,
+        createdAt: Date.now(),
+        members,
+      });
+
+      resetGroupDraft();
+      setShowCreateGroupModal(false);
+      setActiveChannel(groupChannelKey(groupId));
+      setMobilePanel('chat');
+    } catch (err) {
+      console.error('Error creating group:', err);
+      alert('Could not create the group. Check your connection and try again.');
+    }
+  };
+
+  const handleStartDMWith = (username: string) => {
+    if (!currentUser || username === currentUser) return;
+    setManualConversations((prev) => (prev.includes(username) ? prev : [...prev, username]));
+    setActiveChannel(username);
+    setReplyingTo(null);
+    setEditingMessage(null);
+    setMobilePanel('chat');
+  };
+
+  const handleRenameGroup = async () => {
+    if (!activeGroup) return;
+    const name = groupNameDraft.trim();
+    if (!name) {
+      alert('Group name cannot be empty.');
+      return;
+    }
+    try {
+      await update(ref(database, `groups/${activeGroup.id}`), {
+        name,
+        emoji: groupEmojiDraft || activeGroup.emoji,
+      });
+    } catch (err) {
+      console.error('Error renaming group:', err);
+    }
+  };
+
+  const handleAddGroupMember = async () => {
+    if (!activeGroup || !memberToAdd) return;
+    try {
+      await update(ref(database, `groups/${activeGroup.id}/members`), { [memberToAdd]: true });
+      setMemberToAdd('');
+    } catch (err) {
+      console.error('Error adding member:', err);
+    }
+  };
+
+  const handleRemoveGroupMember = async (username: string) => {
+    if (!activeGroup) return;
+    if (!confirm(`Remove @${username} from ${activeGroup.name}?`)) return;
+    try {
+      await remove(ref(database, `groups/${activeGroup.id}/members/${username}`));
+    } catch (err) {
+      console.error('Error removing member:', err);
+    }
+  };
+
+  const handleLeaveGroup = async () => {
+    if (!activeGroup || !currentUser) return;
+    if (!confirm(`Leave ${activeGroup.name}?`)) return;
+
+    const groupId = activeGroup.id;
+    const remaining = Object.keys(activeGroup.members).filter((u) => u !== currentUser);
+
+    try {
+      if (remaining.length === 0) {
+        await remove(ref(database, `groups/${groupId}`));
+      } else {
+        await remove(ref(database, `groups/${groupId}/members/${currentUser}`));
+      }
+    } catch (err) {
+      console.error('Error leaving group:', err);
+    }
+
+    setShowGroupInfo(false);
+    setActiveChannel('general');
+    setMobilePanel('list');
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* DERIVED DATA                                                       */
+  /* ------------------------------------------------------------------ */
+  const conversations = Array.from(new Set([...messagePartners, ...manualConversations])).sort(
+    (a, b) => a.localeCompare(b)
+  );
+
+  const activeGroup: GroupChat | null = isGroupKey(activeChannel)
+    ? groups[groupIdFromChannel(activeChannel)] || null
+    : null;
+
   const displayedMessages = rawMessages.filter((msg) => {
     if (activeChannel === 'general') {
       return msg.receiver === 'general';
+    }
+    if (isGroupKey(activeChannel)) {
+      return msg.receiver === activeChannel;
     }
     return (
       (msg.sender === currentUser && msg.receiver === activeChannel) ||
@@ -506,7 +873,18 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   });
   const lastSeenMsgId = selfReadMessages.length > 0 ? selfReadMessages[selfReadMessages.length - 1].id : null;
 
-  const pinnedMessage = rawMessages.find((m) => m.id === pinnedMessageId);
+  const pinnedMessage = displayedMessages.find((m) => m.id === pinnedMessageId);
+
+  const getUnreadCount = (channelKey: string) => {
+    const me = currentUser || '';
+    return rawMessages.filter((msg) => {
+      if (msg.sender === me) return false;
+      if (msg.readBy?.[me]) return false;
+      if (channelKey === 'general') return msg.receiver === 'general';
+      if (isGroupKey(channelKey)) return msg.receiver === channelKey;
+      return msg.sender === channelKey && msg.receiver === me;
+    }).length;
+  };
 
   const renderDiscordBadge = (uname: string) => {
     const prof = userProfiles[uname];
@@ -543,6 +921,41 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     );
   };
 
+  const renderGroupAvatar = (group: GroupChat, size = 'h-9 w-9') => (
+    <div
+      className={`${size} flex items-center justify-center rounded-full bg-[#2a3942] border border-slate-600/60 text-base shrink-0`}
+    >
+      <span>{group.emoji || '👥'}</span>
+    </div>
+  );
+
+  const renderChannelAvatar = (channelKey: string, size = 'h-9 w-9') => {
+    if (channelKey === 'general') {
+      return (
+        <div className={`${size} flex items-center justify-center rounded-full bg-slate-700 text-emerald-400 font-bold shrink-0`}>
+          <Hash className="h-[55%] w-[55%]" />
+        </div>
+      );
+    }
+    if (isGroupKey(channelKey)) {
+      const g = groups[groupIdFromChannel(channelKey)];
+      return renderGroupAvatar(
+        g || { id: '', name: 'Group', emoji: '👥', createdBy: '', createdAt: 0, members: {} },
+        size
+      );
+    }
+    return renderAvatar(channelKey, size);
+  };
+
+  const describeChannel = (channelKey: string) => {
+    if (channelKey === 'general') return '#general-chat';
+    if (isGroupKey(channelKey)) {
+      const g = groups[groupIdFromChannel(channelKey)];
+      return g ? g.name : 'Group Chat';
+    }
+    return `@${channelKey}`;
+  };
+
   const isSameDay = (t1: number, t2: number) => {
     const d1 = new Date(t1);
     const d2 = new Date(t2);
@@ -571,6 +984,99 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   };
 
   const typingUserNames = Object.keys(typingUsers);
+
+  const openChannel = (channelKey: string) => {
+    setActiveChannel(channelKey);
+    setReplyingTo(null);
+    setEditingMessage(null);
+    setActiveMessageMenuId(null);
+    setMobilePanel('chat');
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* MESSAGE 3-DOT DROPDOWN                                             */
+  /* ------------------------------------------------------------------ */
+  const renderMessageMenu = (msg: ChatMessage, isSelf: boolean) => {
+    const editable = canEditMessage(msg);
+    const minsLeft = editMinutesLeft(msg);
+
+    return (
+      <div ref={messageMenuRef} className="relative">
+        <button
+          onClick={() => setActiveMessageMenuId(activeMessageMenuId === msg.id ? null : msg.id)}
+          className="p-1 rounded text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
+        >
+          <MoreVertical className="h-3.5 w-3.5" />
+        </button>
+
+        {activeMessageMenuId === msg.id && (
+          <div
+            className={`absolute z-30 w-44 rounded-xl border border-slate-800 bg-[#1f2c34] p-1 shadow-2xl top-6 ${
+              isSelf ? 'right-0' : 'left-0'
+            }`}
+          >
+            <button
+              onClick={() => {
+                setReplyingTo({
+                  id: msg.id,
+                  sender: msg.sender,
+                  text: msg.text || (msg.imageUrl ? '📷 Photo' : ''),
+                  imageUrl: msg.imageUrl,
+                });
+                setEditingMessage(null);
+                setActiveMessageMenuId(null);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700/70"
+            >
+              <Reply className="h-3.5 w-3.5 text-emerald-400" /> Reply
+            </button>
+
+            {msg.text.trim().length > 0 && (
+              <button
+                onClick={() => {
+                  navigator.clipboard?.writeText(msg.text).catch(() => {});
+                  setActiveMessageMenuId(null);
+                }}
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700/70"
+              >
+                <Copy className="h-3.5 w-3.5 text-emerald-400" /> Copy Text
+              </button>
+            )}
+
+            {/* EDIT: only your own messages, only for 15 minutes */}
+            {isSelf && editable && (
+              <button
+                onClick={() => startEditing(msg)}
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700/70"
+              >
+                <Pencil className="h-3.5 w-3.5 text-amber-400" /> Edit Message
+                <span className="ml-auto text-[9px] font-semibold text-slate-500">{minsLeft}m</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => {
+                setPinnedMessageId(msg.id);
+                setActiveMessageMenuId(null);
+              }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700/70"
+            >
+              <Pin className="h-3.5 w-3.5 text-emerald-400" /> Pin Message
+            </button>
+
+            {(isSelf || isCurrentFounder) && (
+              <button
+                onClick={() => handleDeleteMessage(msg.id)}
+                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-red-400 hover:bg-red-500/10"
+              >
+                <Trash2 className="h-3.5 w-3.5" /> Delete
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   if (!currentUser) {
     return (
@@ -674,10 +1180,80 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
   const isCurrentFounder = userProfiles[currentUser]?.isFounder;
   const availableUsersToMessage = allUsers.filter((u) => u !== currentUser);
-  const onlineParticipants = allUsers.filter((u) => onlineUsers[u]);
-  const offlineParticipants = allUsers.filter((u) => !onlineUsers[u]);
   const activeConversations = conversations.filter((ch) => !hiddenChannels.includes(ch));
   const isGeneralHidden = hiddenChannels.includes('general');
+
+  const myGroups = Object.values(groups)
+    .filter((g) => !hiddenChannels.includes(groupChannelKey(g.id)))
+    .sort((a, b) => a.createdAt - b.createdAt);
+
+  /* Participants sidebar is now context aware:
+     - #general-chat -> every member of the server
+     - a group chat  -> only that group's members
+     - a DM          -> just you + the other person */
+  const participantsBase: string[] = activeGroup
+    ? Object.keys(activeGroup.members)
+    : activeChannel === 'general'
+    ? allUsers
+    : Array.from(new Set([currentUser, activeChannel])).filter(Boolean);
+
+  const sortedParticipants = Array.from(new Set(participantsBase)).sort((a, b) => {
+    if (a === currentUser) return -1;
+    if (b === currentUser) return 1;
+    const aOnline = !!onlineUsers[a];
+    const bOnline = !!onlineUsers[b];
+    if (aOnline !== bOnline) return aOnline ? -1 : 1;
+    return a.localeCompare(b);
+  });
+
+  const onlineParticipants = sortedParticipants.filter((u) => !!onlineUsers[u]);
+  const offlineParticipants = sortedParticipants.filter((u) => !onlineUsers[u]);
+
+  const groupOnlineCount = activeGroup
+    ? Object.keys(activeGroup.members).filter((u) => !!onlineUsers[u]).length
+    : 0;
+
+  const participantsTitle =
+    activeChannel === 'general' ? '#general-chat' : activeGroup ? activeGroup.name : `@${activeChannel}`;
+
+  const participantsSubtitle = activeGroup
+    ? `${Object.keys(activeGroup.members).length} members · ${groupOnlineCount} online`
+    : activeChannel === 'general'
+    ? `${allUsers.length} members`
+    : onlineUsers[activeChannel]
+    ? 'Online'
+    : 'Offline';
+
+  const toggleSection = (key: string) =>
+    setCollapsedSections((prev) => ({ ...prev, [key]: !prev[key] }));
+
+  const SectionHeader = ({
+    label,
+    count,
+    sectionKey,
+    action,
+  }: {
+    label: string;
+    count?: number;
+    sectionKey: string;
+    action?: React.ReactNode;
+  }) => (
+    <div className="group/section flex items-center justify-between px-1 mb-1">
+      <button
+        onClick={() => toggleSection(sectionKey)}
+        className="flex items-center gap-0.5 text-[10px] font-extrabold tracking-wider text-slate-400 uppercase hover:text-slate-200 transition-colors"
+      >
+        {collapsedSections[sectionKey] ? (
+          <ChevronRight className="h-3 w-3" />
+        ) : (
+          <ChevronDown className="h-3 w-3" />
+        )}
+        <span>{label}</span>
+        {typeof count === 'number' && <span className="text-slate-500">— {count}</span>}
+      </button>
+      {action}
+    </div>
+  );
 
   return (
     <div className="fixed inset-0 z-50 flex bg-[#0b141a] font-sans text-slate-100 overflow-hidden">
@@ -715,72 +1291,193 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           </button>
         </div>
 
-        {/* CHANNELS & DMS */}
-        <div className="flex-1 overflow-y-auto p-2 space-y-4">
+        {/* CHANNELS, GROUPS & DMS */}
+        <div className="flex-1 overflow-y-auto p-2 space-y-5">
           {!isGeneralHidden && (
             <div>
-              <span className="block px-3 text-[10px] font-extrabold tracking-wider text-slate-400 uppercase mb-1">
-                Channels
-              </span>
-              <button
-                onClick={() => {
-                  setActiveChannel('general');
-                  setMobilePanel('chat');
-                }}
-                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                  activeChannel === 'general'
-                    ? 'bg-[#2a3942] text-emerald-400 font-bold'
-                    : 'text-slate-300 hover:bg-[#202c33]'
-                }`}
-              >
-                <Hash className="h-4 w-4 text-emerald-400" />
-                <span>general-chat</span>
-              </button>
+              <SectionHeader label="Channels" sectionKey="channels" count={1} />
+              {!collapsedSections['channels'] && (
+                <button
+                  onClick={() => openChannel('general')}
+                  className={`w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-left transition-colors ${
+                    activeChannel === 'general'
+                      ? 'bg-[#2a3942] text-white'
+                      : 'text-slate-300 hover:bg-[#202c33]'
+                  }`}
+                >
+                  <Hash
+                    className={`h-4 w-4 shrink-0 ${
+                      activeChannel === 'general' ? 'text-emerald-400' : 'text-slate-500'
+                    }`}
+                  />
+                  <span
+                    className={`truncate text-[13px] ${
+                      getUnreadCount('general') > 0 ? 'font-bold text-white' : 'font-semibold'
+                    }`}
+                  >
+                    general-chat
+                  </span>
+                  {getUnreadCount('general') > 0 && (
+                    <span className="ml-auto rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                      {getUnreadCount('general')}
+                    </span>
+                  )}
+                </button>
+              )}
             </div>
           )}
 
+          {/* GROUP CHATS */}
           <div>
-            <div className="flex items-center justify-between px-3 mb-1">
-              <span className="text-[10px] font-extrabold tracking-wider text-slate-400 uppercase">
-                Direct Messages ({activeConversations.length})
-              </span>
-            </div>
+            <SectionHeader
+              label="Group Chats"
+              sectionKey="groups"
+              count={myGroups.length}
+              action={
+                <button
+                  onClick={() => {
+                    fetchUsersAndProfiles();
+                    resetGroupDraft();
+                    setShowCreateGroupModal(true);
+                  }}
+                  title="Create a group chat"
+                  className="rounded-md p-0.5 text-slate-400 hover:text-emerald-400 hover:bg-[#202c33] transition-colors"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              }
+            />
 
-            {activeConversations.length === 0 ? (
-              <p className="px-3 py-2 text-[11px] text-slate-500 italic">
-                No active conversations.
-              </p>
-            ) : (
-              <div className="space-y-0.5">
-                {activeConversations.map((username) => (
-                  <button
-                    key={username}
-                    onClick={() => {
-                      setActiveChannel(username);
-                      setMobilePanel('chat');
-                    }}
-                    className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
-                      activeChannel === username
-                        ? 'bg-[#2a3942] text-emerald-400 font-bold'
-                        : 'text-slate-300 hover:bg-[#202c33]'
-                    }`}
-                  >
-                    <div className="flex items-center gap-2.5 overflow-hidden">
-                      {renderAvatar(username, 'h-6 w-6')}
-                      <span className="truncate">{username}</span>
-                    </div>
-                    <span className="text-[9px] text-slate-500">
-                      {onlineUsers[username] ? 'online' : 'offline'}
-                    </span>
-                  </button>
-                ))}
-              </div>
+            {!collapsedSections['groups'] && (
+              <>
+                {myGroups.length === 0 ? (
+                  <p className="px-2 py-1 text-[11px] text-slate-500 italic">
+                    No groups yet. Hit + to make one.
+                  </p>
+                ) : (
+                  <div className="space-y-0.5">
+                    {myGroups.map((g) => {
+                      const key = groupChannelKey(g.id);
+                      const unread = getUnreadCount(key);
+                      const memberCount = Object.keys(g.members).length;
+                      return (
+                        <button
+                          key={g.id}
+                          onClick={() => openChannel(key)}
+                          className={`w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-left transition-colors ${
+                            activeChannel === key
+                              ? 'bg-[#2a3942] text-white'
+                              : 'text-slate-300 hover:bg-[#202c33]'
+                          }`}
+                        >
+                          {renderGroupAvatar(g, 'h-8 w-8')}
+                          <div className="min-w-0 flex-1">
+                            <span
+                              className={`block truncate text-[13px] ${
+                                unread > 0 ? 'font-bold text-white' : 'font-semibold'
+                              }`}
+                            >
+                              {g.name}
+                            </span>
+                            <span className="block text-[10px] text-slate-500">
+                              {memberCount} {memberCount === 1 ? 'member' : 'members'}
+                            </span>
+                          </div>
+                          {unread > 0 && (
+                            <span className="ml-1 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                              {unread > 99 ? '99+' : unread}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* DIRECT MESSAGES */}
+          <div>
+            <SectionHeader
+              label="Direct Messages"
+              sectionKey="dms"
+              count={activeConversations.length}
+              action={
+                <button
+                  onClick={() => {
+                    fetchUsersAndProfiles();
+                    setShowNewDMModal(true);
+                  }}
+                  title="Start a new DM"
+                  className="rounded-md p-0.5 text-slate-400 hover:text-emerald-400 hover:bg-[#202c33] transition-colors"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              }
+            />
+
+            {!collapsedSections['dms'] && (
+              <>
+                {activeConversations.length === 0 ? (
+                  <p className="px-2 py-1 text-[11px] text-slate-500 italic">
+                    No active conversations.
+                  </p>
+                ) : (
+                  <div className="space-y-0.5">
+                    {activeConversations.map((username) => {
+                      const isOnline = !!onlineUsers[username];
+                      const unread = getUnreadCount(username);
+                      return (
+                        <button
+                          key={username}
+                          onClick={() => openChannel(username)}
+                          className={`w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-left transition-colors ${
+                            activeChannel === username
+                              ? 'bg-[#2a3942] text-white'
+                              : 'text-slate-300 hover:bg-[#202c33]'
+                          }`}
+                        >
+                          <div className="relative shrink-0">
+                            {renderAvatar(username, 'h-8 w-8')}
+                            <span
+                              className={`absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full ring-[3px] ${
+                                isOnline ? 'bg-emerald-500' : 'bg-slate-600'
+                              } ${activeChannel === username ? 'ring-[#2a3942]' : 'ring-[#111b21]'}`}
+                            />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span
+                                className={`truncate text-[13px] ${
+                                  unread > 0 ? 'font-bold text-white' : 'font-semibold'
+                                }`}
+                              >
+                                {username}
+                              </span>
+                              {renderDiscordBadge(username)}
+                            </div>
+                            <span className="block text-[10px] text-slate-500">
+                              {isOnline ? 'Online' : 'Offline'}
+                            </span>
+                          </div>
+                          {unread > 0 && (
+                            <span className="ml-1 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
+                              {unread > 99 ? '99+' : unread}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </>
             )}
           </div>
         </div>
 
         {/* SIDEBAR FOOTER: SETTINGS & NEW DM */}
-        <div className="p-3 border-t border-slate-800 bg-[#111b21] flex items-center justify-between">
+        <div className="p-3 border-t border-slate-800 bg-[#111b21] flex items-center justify-between gap-2">
           <button
             onClick={() => setShowSettingsModal(true)}
             title="Settings"
@@ -812,25 +1509,19 @@ export default function SecretChat({ onClose }: SecretChatProps) {
             >
               <ArrowLeft className="h-5 w-5" />
             </button>
-            <div className="relative shrink-0">
-              {activeChannel === 'general' ? (
-                <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-700 text-emerald-400 font-bold">
-                  <Hash className="h-5 w-5" />
-                </div>
-              ) : (
-                renderAvatar(activeChannel, 'h-9 w-9')
-              )}
-            </div>
+            <div className="relative shrink-0">{renderChannelAvatar(activeChannel, 'h-9 w-9')}</div>
             <div className="overflow-hidden">
               <div className="flex items-center gap-2">
                 <h3 className="text-sm font-bold text-slate-100 truncate">
-                  {activeChannel === 'general' ? '#general-chat' : activeChannel}
+                  {activeChannel === 'general' ? '#general-chat' : activeGroup ? activeGroup.name : activeChannel}
                 </h3>
-                {activeChannel !== 'general' && renderDiscordBadge(activeChannel)}
+                {activeChannel !== 'general' && !activeGroup && renderDiscordBadge(activeChannel)}
               </div>
               <p className="text-[11px] text-emerald-400">
                 {activeChannel === 'general'
                   ? `${Object.keys(onlineUsers).length} online`
+                  : activeGroup
+                  ? `${Object.keys(activeGroup.members).length} members · ${groupOnlineCount} online`
                   : onlineUsers[activeChannel]
                   ? 'Online'
                   : 'Offline'}
@@ -856,7 +1547,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               <Users className="h-5 w-5" />
             </button>
 
-            <div className="relative">
+            <div ref={channelMenuRef} className="relative">
               <button
                 onClick={() => setShowChannelMenu((prev) => !prev)}
                 className="p-2 rounded-xl text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
@@ -865,12 +1556,28 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               </button>
 
               {showChannelMenu && (
-                <div className="absolute right-0 top-10 z-20 w-44 rounded-2xl border border-slate-800 bg-[#1f2c34] p-1.5 shadow-2xl">
+                <div className="absolute right-0 top-10 z-20 w-48 rounded-2xl border border-slate-800 bg-[#1f2c34] p-1.5 shadow-2xl">
+                  {activeGroup && (
+                    <button
+                      onClick={() => {
+                        setGroupNameDraft(activeGroup.name);
+                        setGroupEmojiDraft(activeGroup.emoji);
+                        setMemberToAdd('');
+                        setShowGroupInfo(true);
+                        setShowChannelMenu(false);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold text-slate-300 hover:bg-slate-700/60 transition-colors"
+                    >
+                      <Info className="h-4 w-4 text-emerald-400" /> Group Info
+                    </button>
+                  )}
+
                   <button
                     onClick={() => handleHideChannel(activeChannel)}
                     className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-xs font-bold text-slate-300 hover:bg-slate-700/60 transition-colors"
                   >
-                    <Eye className="h-4 w-4 text-emerald-400" /> Hide GC
+                    <Eye className="h-4 w-4 text-emerald-400" />
+                    {activeGroup ? 'Hide Group' : activeChannel === 'general' ? 'Hide Channel' : 'Hide Chat'}
                   </button>
                 </div>
               )}
@@ -923,7 +1630,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           ) : (
             displayedMessages.map((msg, idx) => {
               const isSelf = msg.sender === currentUser;
-              const isMenuOpen = activeMessageMenuId === msg.id;
+              const isBeingEdited = editingMessage?.id === msg.id;
 
               const readUsers = Object.keys(msg.readBy || {}).filter((u) => u !== msg.sender);
               const isRead = readUsers.length > 0;
@@ -935,206 +1642,124 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
               return (
                 <React.Fragment key={msg.id}>
-                {showDateDivider && (
-                  <div className="flex items-center justify-center my-4">
-                    <span className="rounded-lg bg-[#182229] px-3 py-1.5 text-[11px] font-semibold text-slate-300 shadow-sm uppercase tracking-wide">
-                      {formatDateDivider(msg.timestamp)}
-                    </span>
-                  </div>
-                )}
-                <div
-                  id={`msg-${msg.id}`}
-                  onTouchStart={handleTouchStart}
-                  onTouchEnd={(e) => handleTouchEnd(e, msg)}
-                  className={`flex flex-col ${isSelf ? 'items-end' : 'items-start'} relative group transition-transform duration-200 ${
-                    isSequence ? 'mt-1' : 'mt-3'
-                  }`}
-                >
-                  <div
-                    className={`max-w-[85%] sm:max-w-[65%] rounded-2xl px-3.5 py-2 shadow-sm text-sm relative ${
-                      isSelf
-                        ? 'bg-[#005c4b] text-[#e9edef] rounded-tr-none'
-                        : 'bg-[#202c33] text-[#e9edef] rounded-tl-none'
-                    }`}
-                  >
-                    {/* SENDER HEADER - Rendered only on the first message of a consecutive series */}
-                    {!isSequence ? (
-                      <div className="flex items-center justify-between border-b border-slate-700/40 pb-1 mb-1.5 gap-4">
-                        <div className="flex items-center gap-2">
-                          {renderAvatar(msg.sender, 'h-5 w-5')}
-                          <span
-                            onClick={() => setInspectingUser(msg.sender)}
-                            className="text-xs font-bold text-emerald-400 hover:underline cursor-pointer"
-                          >
-                            {msg.sender}
-                          </span>
-                          {renderDiscordBadge(msg.sender)}
-                        </div>
-
-                        <div className="relative">
-                          <button
-                            onClick={() =>
-                              setActiveMessageMenuId(isMenuOpen ? null : msg.id)
-                            }
-                            className="p-1 rounded text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
-                          >
-                            <MoreVertical className="h-3.5 w-3.5" />
-                          </button>
-
-                          {isMenuOpen && (
-                            <div
-                              className={`absolute z-30 w-36 rounded-xl border border-slate-800 bg-[#1f2c34] p-1 shadow-xl top-6 ${
-                                isSelf ? 'right-0' : 'left-0'
-                              }`}
-                            >
-                              <button
-                                onClick={() => {
-                                  setReplyingTo({
-                                    id: msg.id,
-                                    sender: msg.sender,
-                                    text: msg.text || (msg.imageUrl ? '📷 Photo' : ''),
-                                    imageUrl: msg.imageUrl,
-                                  });
-                                  setActiveMessageMenuId(null);
-                                }}
-                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700/70"
-                              >
-                                <Reply className="h-3.5 w-3.5 text-emerald-400" /> Reply
-                              </button>
-
-                              <button
-                                onClick={() => {
-                                  setPinnedMessageId(msg.id);
-                                  setActiveMessageMenuId(null);
-                                }}
-                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700/70"
-                              >
-                                <Pin className="h-3.5 w-3.5 text-emerald-400" /> Pin Message
-                              </button>
-
-                              {(isSelf || isCurrentFounder) && (
-                                <button
-                                  onClick={() => handleDeleteMessage(msg.id)}
-                                  className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-red-400 hover:bg-red-500/10"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" /> Delete
-                                </button>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      /* Minimal Dropdown for grouped messages */
-                      <div className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button
-                          onClick={() => setActiveMessageMenuId(isMenuOpen ? null : msg.id)}
-                          className="p-1 rounded text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
-                        >
-                          <MoreVertical className="h-3.5 w-3.5" />
-                        </button>
-
-                        {isMenuOpen && (
-                          <div
-                            className={`absolute z-30 w-36 rounded-xl border border-slate-800 bg-[#1f2c34] p-1 shadow-xl top-6 ${
-                              isSelf ? 'right-0' : 'left-0'
-                            }`}
-                          >
-                            <button
-                              onClick={() => {
-                                setReplyingTo({
-                                  id: msg.id,
-                                  sender: msg.sender,
-                                  text: msg.text || (msg.imageUrl ? '📷 Photo' : ''),
-                                  imageUrl: msg.imageUrl,
-                                });
-                                setActiveMessageMenuId(null);
-                              }}
-                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700/70"
-                            >
-                              <Reply className="h-3.5 w-3.5 text-emerald-400" /> Reply
-                            </button>
-
-                            <button
-                              onClick={() => {
-                                setPinnedMessageId(msg.id);
-                                setActiveMessageMenuId(null);
-                              }}
-                              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700/70"
-                            >
-                              <Pin className="h-3.5 w-3.5 text-emerald-400" /> Pin Message
-                            </button>
-
-                            {(isSelf || isCurrentFounder) && (
-                              <button
-                                onClick={() => handleDeleteMessage(msg.id)}
-                                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-red-400 hover:bg-red-500/10"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" /> Delete
-                              </button>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* REPLY PREVIEW IN BUBBLE */}
-                    {msg.replyTo && (
-                      <div
-                        onClick={() => {
-                          const target = document.getElementById(`msg-${msg.replyTo?.id}`);
-                          target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                        }}
-                        className="mb-2 rounded-lg border-l-4 border-emerald-400 bg-slate-900/60 p-2 text-xs cursor-pointer hover:bg-slate-900/90 transition-colors"
-                      >
-                        <span className="block font-bold text-emerald-400">{msg.replyTo.sender}</span>
-                        {msg.replyTo.imageUrl && (
-                          <span className="block text-[11px] text-slate-400 italic">📷 Photo</span>
-                        )}
-                        {msg.replyTo.text && (
-                          <p className="truncate text-slate-300 text-[11px]">{msg.replyTo.text}</p>
-                        )}
-                      </div>
-                    )}
-
-                    {/* IMAGE CONTENT */}
-                    {msg.imageUrl && (
-                      <div className="my-1 overflow-hidden rounded-xl bg-slate-900 border border-slate-700/50">
-                        <img
-                          src={msg.imageUrl}
-                          alt="Attachment"
-                          onClick={() => setExpandedImageUrl(msg.imageUrl || null)}
-                          className="max-h-72 w-full object-cover cursor-pointer hover:opacity-95 transition-opacity"
-                        />
-                      </div>
-                    )}
-
-                    {/* TEXT CONTENT */}
-                    {msg.text && (
-                      <p className="leading-relaxed whitespace-pre-wrap text-sm">{msg.text}</p>
-                    )}
-
-                    <div className="flex items-center justify-end gap-1 mt-1">
-                      <span
-                        className={`text-[10px] ${
-                          isSelf ? 'text-emerald-200/70' : 'text-slate-400'
-                        }`}
-                      >
-                        {msg.time}
+                  {showDateDivider && (
+                    <div className="flex items-center justify-center my-4">
+                      <span className="rounded-lg bg-[#182229] px-3 py-1.5 text-[11px] font-semibold text-slate-300 shadow-sm uppercase tracking-wide">
+                        {formatDateDivider(msg.timestamp)}
                       </span>
-                      {isSelf && (
-                        <CheckCheck className={`h-3.5 w-3.5 ${isRead ? 'text-sky-400' : 'text-slate-400'}`} />
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Single "Seen" display on the last seen message only */}
-                  {isSelf && msg.id === lastSeenMsgId && (
-                    <div className="text-[10px] text-slate-400/80 mt-0.5 px-1 font-medium">
-                      Seen by {msg.receiver === 'general' ? readUsers.join(', ') : msg.receiver}
                     </div>
                   )}
-                </div>
+                  <div
+                    id={`msg-${msg.id}`}
+                    onTouchStart={handleTouchStart}
+                    onTouchEnd={(e) => handleTouchEnd(e, msg)}
+                    className={`flex flex-col ${isSelf ? 'items-end' : 'items-start'} relative group transition-transform duration-200 ${
+                      isSequence ? 'mt-1' : 'mt-3'
+                    }`}
+                  >
+                    <div
+                      className={`max-w-[85%] sm:max-w-[65%] rounded-2xl px-3.5 py-2 shadow-sm text-sm relative ${
+                        isSelf
+                          ? 'bg-[#005c4b] text-[#e9edef] rounded-tr-none'
+                          : 'bg-[#202c33] text-[#e9edef] rounded-tl-none'
+                      } ${isBeingEdited ? 'ring-2 ring-amber-400/70' : ''}`}
+                    >
+                      {/* SENDER HEADER - Rendered only on the first message of a consecutive series */}
+                      {!isSequence ? (
+                        <div className="flex items-center justify-between border-b border-slate-700/40 pb-1 mb-1.5 gap-4">
+                          <div className="flex items-center gap-2">
+                            {renderAvatar(msg.sender, 'h-5 w-5')}
+                            <span
+                              onClick={() => setInspectingUser(msg.sender)}
+                              className="text-xs font-bold text-emerald-400 hover:underline cursor-pointer"
+                            >
+                              {msg.sender}
+                            </span>
+                            {renderDiscordBadge(msg.sender)}
+                          </div>
+
+                          {renderMessageMenu(msg, isSelf)}
+                        </div>
+                      ) : (
+                        /* Minimal dropdown for grouped messages */
+                        <div
+                          className={`absolute right-2 top-2 transition-opacity ${
+                            activeMessageMenuId === msg.id
+                              ? 'opacity-100'
+                              : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'
+                          }`}
+                        >
+                          {renderMessageMenu(msg, isSelf)}
+                        </div>
+                      )}
+
+                      {/* REPLY PREVIEW IN BUBBLE */}
+                      {msg.replyTo && (
+                        <div
+                          onClick={() => {
+                            const target = document.getElementById(`msg-${msg.replyTo?.id}`);
+                            target?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                          }}
+                          className="mb-2 rounded-lg border-l-4 border-emerald-400 bg-slate-900/60 p-2 text-xs cursor-pointer hover:bg-slate-900/90 transition-colors"
+                        >
+                          <span className="block font-bold text-emerald-400">{msg.replyTo.sender}</span>
+                          {msg.replyTo.imageUrl && (
+                            <span className="block text-[11px] text-slate-400 italic">📷 Photo</span>
+                          )}
+                          {msg.replyTo.text && (
+                            <p className="truncate text-slate-300 text-[11px]">{msg.replyTo.text}</p>
+                          )}
+                        </div>
+                      )}
+
+                      {/* IMAGE CONTENT */}
+                      {msg.imageUrl && (
+                        <div className="my-1 overflow-hidden rounded-xl bg-slate-900 border border-slate-700/50">
+                          <img
+                            src={msg.imageUrl}
+                            alt="Attachment"
+                            onClick={() => setExpandedImageUrl(msg.imageUrl || null)}
+                            className="max-h-72 w-full object-cover cursor-pointer hover:opacity-95 transition-opacity"
+                          />
+                        </div>
+                      )}
+
+                      {/* TEXT CONTENT */}
+                      {msg.text && (
+                        <p className="leading-relaxed whitespace-pre-wrap text-sm">{msg.text}</p>
+                      )}
+
+                      <div className="flex items-center justify-end gap-1 mt-1">
+                        {msg.edited && (
+                          <span className={`text-[10px] italic ${isSelf ? 'text-emerald-200/70' : 'text-slate-400'}`}>
+                            edited
+                          </span>
+                        )}
+                        <span
+                          className={`text-[10px] ${
+                            isSelf ? 'text-emerald-200/70' : 'text-slate-400'
+                          }`}
+                        >
+                          {msg.time}
+                        </span>
+                        {isSelf && (
+                          <CheckCheck className={`h-3.5 w-3.5 ${isRead ? 'text-sky-400' : 'text-slate-400'}`} />
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Single "Seen" display on the last seen message only */}
+                    {isSelf && msg.id === lastSeenMsgId && (
+                      <div className="text-[10px] text-slate-400/80 mt-0.5 px-1 font-medium">
+                        Seen by{' '}
+                        {msg.receiver === 'general'
+                          ? readUsers.join(', ')
+                          : isGroupKey(msg.receiver)
+                          ? readUsers.filter((u) => u !== currentUser).join(', ') || '—'
+                          : msg.receiver}
+                      </div>
+                    )}
+                  </div>
                 </React.Fragment>
               );
             })
@@ -1158,8 +1783,33 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
         {/* INPUT & ATTACHMENT PREVIEW PANEL */}
         <div className="bg-[#1f2c34] p-3 border-t border-slate-800 space-y-2">
+          {/* EDIT MESSAGE BAR */}
+          {editingMessage && (
+            <div className="flex items-center justify-between rounded-xl bg-[#2a3942] px-3 py-2 border-l-4 border-amber-400 text-xs text-slate-200 max-w-5xl mx-auto">
+              <div className="overflow-hidden">
+                <span className="flex items-center gap-1.5 font-bold text-amber-400">
+                  <Pencil className="h-3 w-3" /> Editing message
+                  <span className="text-[10px] font-medium text-slate-400">
+                    ({editMinutesLeft(editingMessage)}m left)
+                  </span>
+                </span>
+                <p className="truncate text-slate-300 text-[11px]">
+                  {editingMessage.text || '📷 Photo'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={cancelEditing}
+                title="Cancel edit"
+                className="p-1 text-slate-400 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+
           {/* REPLY PREVIEW BAR */}
-          {replyingTo && (
+          {replyingTo && !editingMessage && (
             <div className="flex items-center justify-between rounded-xl bg-[#2a3942] px-3 py-2 border-l-4 border-emerald-400 text-xs text-slate-200 max-w-5xl mx-auto">
               <div className="overflow-hidden">
                 <span className="block font-bold text-emerald-400">Replying to @{replyingTo.sender}</span>
@@ -1176,7 +1826,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           )}
 
           {/* IMAGE SELECTION PREVIEW BAR */}
-          {imagePreview && (
+          {imagePreview && !editingMessage && (
             <div className="relative inline-block max-w-5xl mx-auto">
               <div className="relative h-20 w-20 overflow-hidden rounded-xl border border-slate-700 bg-slate-900">
                 <img src={imagePreview} alt="Upload preview" className="h-full w-full object-cover" />
@@ -1204,8 +1854,9 @@ export default function SecretChat({ onClose }: SecretChatProps) {
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              title="Attach Image"
-              className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#2a3942] text-slate-300 hover:text-emerald-400 hover:bg-slate-700 transition-colors shrink-0"
+              disabled={!!editingMessage}
+              title={editingMessage ? 'Finish editing first' : 'Attach Image'}
+              className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#2a3942] text-slate-300 hover:text-emerald-400 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-[#2a3942] transition-colors shrink-0"
             >
               <ImageIcon className="h-5 w-5" />
             </button>
@@ -1218,20 +1869,42 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               onKeyDown={handleKeyDown}
               onPaste={handlePasteImage}
               placeholder={
-                activeChannel === 'general'
+                editingMessage
+                  ? `Editing your message (Shift+Enter for new line)`
+                  : activeChannel === 'general'
                   ? 'Type a message (Shift+Enter for new line)'
+                  : activeGroup
+                  ? `Message ${activeGroup.name} (Shift+Enter for new line)`
                   : `Message @${activeChannel} (Shift+Enter for new line)`
               }
-              className="flex-1 max-h-32 min-h-[44px] resize-none rounded-xl bg-[#2a3942] px-4 py-3 text-sm text-[#d1d7db] placeholder-[#8696a0] outline-none focus:ring-1 focus:ring-emerald-500"
+              className={`flex-1 max-h-32 min-h-[44px] resize-none rounded-xl bg-[#2a3942] px-4 py-3 text-sm text-[#d1d7db] placeholder-[#8696a0] outline-none focus:ring-1 ${
+                editingMessage ? 'focus:ring-amber-500' : 'focus:ring-emerald-500'
+              }`}
             />
+
+            {editingMessage && (
+              <button
+                type="button"
+                onClick={cancelEditing}
+                title="Cancel edit"
+                className="flex h-11 w-11 items-center justify-center rounded-xl bg-slate-700 text-slate-200 hover:bg-slate-600 transition-colors shrink-0"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            )}
 
             <button
               type="submit"
               disabled={(!inputMessage.trim() && !selectedImage) || isUploadingImage}
-              className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#00a884] text-white hover:bg-[#008f70] disabled:opacity-50 transition-colors shrink-0"
+              title={editingMessage ? 'Save changes' : 'Send message'}
+              className={`flex h-11 w-11 items-center justify-center rounded-xl text-white disabled:opacity-50 transition-colors shrink-0 ${
+                editingMessage ? 'bg-amber-600 hover:bg-amber-500' : 'bg-[#00a884] hover:bg-[#008f70]'
+              }`}
             >
               {isUploadingImage ? (
                 <Loader2 className="h-5 w-5 animate-spin" />
+              ) : editingMessage ? (
+                <Check className="h-5 w-5" />
               ) : (
                 <Send className="h-5 w-5" />
               )}
@@ -1240,20 +1913,23 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         </div>
       </main>
 
-      {/* PARTICIPANTS SIDEBAR */}
+      {/* PARTICIPANTS SIDEBAR (context aware, Discord style) */}
       {showParticipants && (
         <aside className={`${mobilePanel === 'participants' ? 'flex' : 'hidden'} md:flex w-full md:w-64 shrink-0 flex-col border-l border-slate-800 bg-[#111b21]`}>
-          <div className="flex items-center justify-between border-b border-slate-800 bg-[#202c33] px-4 py-3.5">
-            <div>
-              <h4 className="text-xs font-bold text-slate-100">Participants</h4>
-              <p className="text-[10px] text-slate-400">{allUsers.length} members</p>
+          <div className="flex items-center justify-between gap-2 border-b border-slate-800 bg-[#202c33] px-4 py-3.5">
+            <div className="flex items-center gap-2.5 overflow-hidden">
+              <div className="shrink-0">{renderChannelAvatar(activeChannel, 'h-8 w-8')}</div>
+              <div className="overflow-hidden">
+                <h4 className="truncate text-xs font-bold text-slate-100">{participantsTitle}</h4>
+                <p className="truncate text-[10px] text-slate-400">{participantsSubtitle}</p>
+              </div>
             </div>
             <button
               onClick={() => {
                 setShowParticipants(false);
                 setMobilePanel('chat');
               }}
-              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
+              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-700 hover:text-white transition-colors shrink-0"
             >
               <X className="h-4 w-4" />
             </button>
@@ -1270,27 +1946,47 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               ) : (
                 <div className="space-y-0.5">
                   {onlineParticipants.map((u) => (
-                    <button
+                    <div
                       key={u}
                       onClick={() => setInspectingUser(u)}
-                      className="w-full flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-[#202c33] transition-colors text-left"
+                      className="group/member w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-[#2a3942] transition-colors text-left cursor-pointer"
                     >
                       <div className="relative shrink-0">
                         {renderAvatar(u, 'h-8 w-8')}
-                        <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-[#111b21]" />
+                        <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-emerald-500 ring-[3px] ring-[#111b21]" />
                       </div>
                       <div className="overflow-hidden flex-1 min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <span className="text-xs font-semibold text-slate-100 truncate">
+                          <span className="text-[13px] font-semibold text-slate-100 truncate">
                             {u}
                             {u === currentUser && (
                               <span className="text-slate-500 font-normal"> (you)</span>
                             )}
                           </span>
                         </div>
-                        {renderDiscordBadge(u) && <div className="mt-1">{renderDiscordBadge(u)}</div>}
+                        {activeGroup && u === activeGroup.createdBy ? (
+                          <span className="flex items-center gap-1 text-[10px] text-amber-400">
+                            <Crown className="h-2.5 w-2.5" /> Group Creator
+                          </span>
+                        ) : (
+                          <span className="block text-[10px] text-emerald-400/80">Online</span>
+                        )}
                       </div>
-                    </button>
+                      {u !== currentUser && (
+                        <span
+                          role="button"
+                          tabIndex={-1}
+                          title={`Message @${u}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleStartDMWith(u);
+                          }}
+                          className="opacity-0 group-hover/member:opacity-100 rounded-md p-1 text-slate-400 hover:text-emerald-400 hover:bg-slate-700/60 transition-all"
+                        >
+                          <MessageSquare className="h-3.5 w-3.5" />
+                        </span>
+                      )}
+                    </div>
                   ))}
                 </div>
               )}
@@ -1306,25 +2002,61 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               ) : (
                 <div className="space-y-0.5">
                   {offlineParticipants.map((u) => (
-                    <button
+                    <div
                       key={u}
                       onClick={() => setInspectingUser(u)}
-                      className="w-full flex items-center gap-2.5 px-2 py-2 rounded-xl hover:bg-[#202c33] transition-colors text-left opacity-50 hover:opacity-80"
+                      className="group/member w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-[#2a3942] transition-colors text-left cursor-pointer opacity-50 hover:opacity-100"
                     >
                       <div className="relative shrink-0">
                         {renderAvatar(u, 'h-8 w-8')}
-                        <span className="absolute bottom-0 right-0 h-2.5 w-2.5 rounded-full bg-slate-600 ring-2 ring-[#111b21]" />
+                        <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-slate-600 ring-[3px] ring-[#111b21]" />
                       </div>
                       <div className="overflow-hidden flex-1 min-w-0">
-                        <span className="text-xs font-semibold text-slate-400 truncate block">{u}</span>
-                        {renderDiscordBadge(u) && <div className="mt-1">{renderDiscordBadge(u)}</div>}
+                        <span className="text-[13px] font-semibold text-slate-400 truncate block">
+                          {u}
+                          {u === currentUser && (
+                            <span className="text-slate-500 font-normal"> (you)</span>
+                          )}
+                        </span>
+                        <span className="block text-[10px] text-slate-500">Offline</span>
                       </div>
-                    </button>
+                      {u !== currentUser && (
+                        <span
+                          role="button"
+                          tabIndex={-1}
+                          title={`Message @${u}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleStartDMWith(u);
+                          }}
+                          className="opacity-0 group-hover/member:opacity-100 rounded-md p-1 text-slate-400 hover:text-emerald-400 hover:bg-slate-700/60 transition-all"
+                        >
+                          <MessageSquare className="h-3.5 w-3.5" />
+                        </span>
+                      )}
+                    </div>
                   ))}
                 </div>
               )}
             </div>
           </div>
+
+          {/* GROUP SHORTCUT */}
+          {activeGroup && (
+            <div className="border-t border-slate-800 p-3">
+              <button
+                onClick={() => {
+                  setGroupNameDraft(activeGroup.name);
+                  setGroupEmojiDraft(activeGroup.emoji);
+                  setMemberToAdd('');
+                  setShowGroupInfo(true);
+                }}
+                className="w-full rounded-xl bg-[#2a3942] px-3 py-2.5 text-xs font-bold text-slate-200 hover:bg-slate-700 transition-colors"
+              >
+                Group Info & Members
+              </button>
+            </div>
+          )}
         </aside>
       )}
 
@@ -1352,8 +2084,14 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
       {/* SETTINGS MODAL */}
       {showSettingsModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4">
-          <div className="w-full max-w-sm rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl relative text-slate-100">
+        <div
+          onClick={() => setShowSettingsModal(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl relative text-slate-100 max-h-[85vh] overflow-y-auto"
+          >
             <button
               onClick={() => setShowSettingsModal(false)}
               className="absolute right-4 top-4 rounded-full p-2 text-slate-400 hover:bg-slate-700 hover:text-white"
@@ -1366,7 +2104,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               <h3 className="text-base font-bold text-white">Settings</h3>
             </div>
 
-            {/* UNHIDE GC SECTION */}
+            {/* UNHIDE SECTION */}
             <div className="mb-6">
               <span className="block text-xs font-bold text-slate-300 uppercase tracking-wider mb-2">
                 Hidden Group Chats / DMs
@@ -1380,14 +2118,16 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                   {hiddenChannels.map((ch) => (
                     <div
                       key={ch}
-                      className="flex items-center justify-between rounded-xl bg-[#111b21] px-3 py-2 border border-slate-800 text-xs"
+                      className="flex items-center justify-between gap-2 rounded-xl bg-[#111b21] px-3 py-2 border border-slate-800 text-xs"
                     >
-                      <span>{ch === 'general' ? '#general-chat' : `@${ch}`}</span>
+                      <span className="truncate">
+                        {ch === 'general' ? '#general-chat' : describeChannel(ch)}
+                      </span>
                       <button
                         onClick={() => handleUnhideChannel(ch)}
-                        className="rounded-lg bg-emerald-600/20 px-2.5 py-1 text-[11px] font-bold text-emerald-400 hover:bg-emerald-600 hover:text-white"
+                        className="shrink-0 rounded-lg bg-emerald-600/20 px-2.5 py-1 text-[11px] font-bold text-emerald-400 hover:bg-emerald-600 hover:text-white"
                       >
-                        Unhide GC
+                        Unhide
                       </button>
                     </div>
                   ))}
@@ -1419,8 +2159,14 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
       {/* GRANT BADGE MODAL FOR FOUNDER */}
       {showGrantBadgeModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4">
-          <div className="w-full max-w-sm rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl relative text-slate-100">
+        <div
+          onClick={() => setShowGrantBadgeModal(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl relative text-slate-100"
+          >
             <button
               onClick={() => setShowGrantBadgeModal(false)}
               className="absolute right-4 top-4 rounded-full p-2 text-slate-400 hover:bg-slate-700 hover:text-white"
@@ -1488,8 +2234,14 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
       {/* INSPECT USER MODAL */}
       {inspectingUser && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4">
-          <div className="w-full max-w-xs rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl text-center relative">
+        <div
+          onClick={() => setInspectingUser(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-xs rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl text-center relative"
+          >
             <div className="flex justify-center mb-3">
               {renderAvatar(inspectingUser, 'h-16 w-16')}
             </div>
@@ -1504,12 +2256,26 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               "{userProfiles[inspectingUser]?.bio || 'No bio provided'}"
             </p>
 
-            <button
-              onClick={() => setInspectingUser(null)}
-              className="w-full rounded-xl bg-slate-800 py-2.5 text-xs font-bold text-white hover:bg-slate-700"
-            >
-              Close
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setInspectingUser(null)}
+                className="flex-1 rounded-xl bg-slate-800 py-2.5 text-xs font-bold text-white hover:bg-slate-700"
+              >
+                Close
+              </button>
+              {inspectingUser !== currentUser && (
+                <button
+                  onClick={() => {
+                    const target = inspectingUser;
+                    setInspectingUser(null);
+                    handleStartDMWith(target);
+                  }}
+                  className="flex-1 rounded-xl bg-[#00a884] py-2.5 text-xs font-bold text-white hover:bg-[#008f70]"
+                >
+                  Message
+                </button>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -1526,8 +2292,14 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
       {/* NEW DM MODAL */}
       {showNewDMModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4">
-          <div className="w-full max-w-sm rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl">
+        <div
+          onClick={() => setShowNewDMModal(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-sm rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl"
+          >
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
                 <Users className="h-5 w-5 text-emerald-400" />
@@ -1561,11 +2333,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               <button
                 onClick={() => {
                   if (selectedDMUser) {
-                    if (!conversations.includes(selectedDMUser)) {
-                      setConversations((prev) => [...prev, selectedDMUser]);
-                    }
-                    setActiveChannel(selectedDMUser);
-                    setMobilePanel('chat');
+                    handleStartDMWith(selectedDMUser);
                     setShowNewDMModal(false);
                     setSelectedDMUser('');
                   }
@@ -1574,6 +2342,295 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                 className="flex-1 rounded-xl bg-[#00a884] py-2.5 text-xs font-bold text-white disabled:opacity-50"
               >
                 Open DM
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CREATE GROUP CHAT MODAL */}
+      {showCreateGroupModal && (
+        <div
+          onClick={() => {
+            setShowCreateGroupModal(false);
+            resetGroupDraft();
+          }}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4"
+        >
+          <form
+            onClick={(e) => e.stopPropagation()}
+            onSubmit={handleCreateGroup}
+            className="w-full max-w-md rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl flex flex-col max-h-[88vh]"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Users className="h-5 w-5 text-emerald-400" />
+                <h3 className="text-base font-bold text-white">Create Group Chat</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCreateGroupModal(false);
+                  resetGroupDraft();
+                }}
+                className="rounded-full p-1.5 text-slate-400 hover:bg-slate-700 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* GROUP NAME */}
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5">Group Name</label>
+            <input
+              type="text"
+              value={newGroupName}
+              onChange={(e) => setNewGroupName(e.target.value)}
+              placeholder="e.g. Bio Squad"
+              maxLength={40}
+              className="w-full rounded-xl border border-slate-700 bg-[#2a3942] px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 mb-4"
+            />
+
+            {/* GROUP EMOJI */}
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              <span className="flex items-center gap-1.5">
+                <Smile className="h-3.5 w-3.5 text-emerald-400" /> Group Icon
+              </span>
+            </label>
+            <div className="flex flex-wrap gap-1.5 mb-4">
+              {GROUP_EMOJIS.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  onClick={() => setNewGroupEmoji(emoji)}
+                  className={`h-9 w-9 rounded-xl text-base transition-all ${
+                    newGroupEmoji === emoji
+                      ? 'bg-emerald-600/30 border border-emerald-500 scale-105'
+                      : 'bg-[#2a3942] border border-slate-700 hover:bg-slate-700'
+                  }`}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+
+            {/* MEMBER PICKER */}
+            <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+              Add Members ({newGroupMembers.length} selected)
+            </label>
+            <div className="relative mb-2">
+              <Search className="absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-slate-500" />
+              <input
+                type="text"
+                value={groupMemberSearch}
+                onChange={(e) => setGroupMemberSearch(e.target.value)}
+                placeholder="Search users..."
+                className="w-full rounded-xl border border-slate-700 bg-[#111b21] py-2.5 pl-9 pr-3 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
+              />
+            </div>
+
+            <div className="flex-1 overflow-y-auto rounded-xl border border-slate-800 bg-[#111b21] p-1.5 min-h-[120px] max-h-[220px]">
+              {availableUsersToMessage
+                .filter((u) => u.toLowerCase().includes(groupMemberSearch.toLowerCase()))
+                .map((user) => {
+                  const selected = newGroupMembers.includes(user);
+                  return (
+                    <button
+                      key={user}
+                      type="button"
+                      onClick={() => toggleNewGroupMember(user)}
+                      className={`w-full flex items-center gap-2.5 rounded-lg px-2 py-2 text-left transition-colors ${
+                        selected ? 'bg-emerald-600/15' : 'hover:bg-[#202c33]'
+                      }`}
+                    >
+                      <div className="relative shrink-0">
+                        {renderAvatar(user, 'h-7 w-7')}
+                        <span
+                          className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-[#111b21] ${
+                            onlineUsers[user] ? 'bg-emerald-500' : 'bg-slate-600'
+                          }`}
+                        />
+                      </div>
+                      <span className="flex-1 truncate text-xs font-semibold text-slate-200">
+                        {user}
+                      </span>
+                      <span
+                        className={`flex h-4 w-4 items-center justify-center rounded-md border ${
+                          selected ? 'bg-emerald-500 border-emerald-500' : 'border-slate-600'
+                        }`}
+                      >
+                        {selected && <Check className="h-3 w-3 text-white" />}
+                      </span>
+                    </button>
+                  );
+                })}
+              {availableUsersToMessage.length === 0 && (
+                <p className="p-3 text-center text-[11px] text-slate-500 italic">
+                  No other users found.
+                </p>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 pt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCreateGroupModal(false);
+                  resetGroupDraft();
+                }}
+                className="flex-1 rounded-xl bg-slate-800 py-2.5 text-xs font-bold text-slate-300 hover:bg-slate-700"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                className="flex-1 rounded-xl bg-[#00a884] py-2.5 text-xs font-bold text-white hover:bg-[#008f70] shadow-lg"
+              >
+                Create Group
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* GROUP INFO MODAL */}
+      {showGroupInfo && activeGroup && (
+        <div
+          onClick={() => setShowGroupInfo(false)}
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 backdrop-blur-sm p-4"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl flex flex-col max-h-[88vh]"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-2">
+                <Info className="h-5 w-5 text-emerald-400" />
+                <h3 className="text-base font-bold text-white">Group Info</h3>
+              </div>
+              <button
+                onClick={() => setShowGroupInfo(false)}
+                className="rounded-full p-1.5 text-slate-400 hover:bg-slate-700 hover:text-white"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-3 mb-4">
+              {renderGroupAvatar({ ...activeGroup, emoji: groupEmojiDraft }, 'h-14 w-14')}
+              <div className="min-w-0 flex-1">
+                <input
+                  type="text"
+                  value={groupNameDraft}
+                  onChange={(e) => setGroupNameDraft(e.target.value)}
+                  maxLength={40}
+                  className="w-full rounded-xl border border-slate-700 bg-[#2a3942] px-3 py-2 text-sm font-bold text-white focus:outline-none focus:border-emerald-500"
+                />
+                <p className="mt-1 text-[10px] text-slate-400">
+                  Created by @{activeGroup.createdBy} · {Object.keys(activeGroup.members).length} members
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-1.5 mb-4">
+              {GROUP_EMOJIS.map((emoji) => (
+                <button
+                  key={emoji}
+                  type="button"
+                  onClick={() => setGroupEmojiDraft(emoji)}
+                  className={`h-8 w-8 rounded-lg text-sm transition-all ${
+                    groupEmojiDraft === emoji
+                      ? 'bg-emerald-600/30 border border-emerald-500'
+                      : 'bg-[#2a3942] border border-slate-700 hover:bg-slate-700'
+                  }`}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+
+            <button
+              onClick={handleRenameGroup}
+              className="mb-4 w-full rounded-xl bg-emerald-600/20 border border-emerald-500/30 py-2.5 text-xs font-bold text-emerald-400 hover:bg-emerald-600 hover:text-white transition-colors"
+            >
+              Save Name & Icon
+            </button>
+
+            {/* MEMBERS */}
+            <span className="block text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mb-1.5">
+              Members — {Object.keys(activeGroup.members).length}
+            </span>
+            <div className="flex-1 overflow-y-auto rounded-xl border border-slate-800 bg-[#111b21] p-1.5 mb-4 min-h-[100px]">
+              {Object.keys(activeGroup.members).map((member) => (
+                <div key={member} className="flex items-center gap-2.5 rounded-lg px-2 py-2">
+                  <div className="relative shrink-0">
+                    {renderAvatar(member, 'h-7 w-7')}
+                    <span
+                      className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-[#111b21] ${
+                        onlineUsers[member] ? 'bg-emerald-500' : 'bg-slate-600'
+                      }`}
+                    />
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-semibold text-slate-200">
+                      {member}
+                      {member === currentUser && <span className="text-slate-500"> (you)</span>}
+                    </span>
+                    {member === activeGroup.createdBy && (
+                      <span className="flex items-center gap-1 text-[10px] text-amber-400">
+                        <Crown className="h-2.5 w-2.5" /> Group Creator
+                      </span>
+                    )}
+                  </div>
+                  {member !== currentUser && member !== activeGroup.createdBy && (
+                    <button
+                      onClick={() => handleRemoveGroupMember(member)}
+                      title={`Remove @${member}`}
+                      className="rounded-md p-1 text-slate-400 hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                    >
+                      <UserMinus className="h-3.5 w-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* ADD MEMBER */}
+            <div className="flex items-center gap-2 mb-4">
+              <select
+                value={memberToAdd}
+                onChange={(e) => setMemberToAdd(e.target.value)}
+                className="flex-1 rounded-xl border border-slate-700 bg-[#2a3942] px-3 py-2.5 text-xs text-white focus:outline-none focus:border-emerald-500"
+              >
+                <option value="">-- Add a member --</option>
+                {availableUsersToMessage
+                  .filter((u) => !activeGroup.members[u])
+                  .map((user) => (
+                    <option key={user} value={user}>
+                      {user} {onlineUsers[user] ? '(Online)' : '(Offline)'}
+                    </option>
+                  ))}
+              </select>
+              <button
+                onClick={handleAddGroupMember}
+                disabled={!memberToAdd}
+                className="rounded-xl bg-[#00a884] px-3.5 py-2.5 text-xs font-bold text-white hover:bg-[#008f70] disabled:opacity-50 transition-colors"
+              >
+                <UserPlus className="h-4 w-4" />
+              </button>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setShowGroupInfo(false)}
+                className="flex-1 rounded-xl bg-slate-800 py-2.5 text-xs font-bold text-slate-300 hover:bg-slate-700"
+              >
+                Close
+              </button>
+              <button
+                onClick={handleLeaveGroup}
+                className="flex-1 rounded-xl bg-red-600/15 border border-red-500/30 py-2.5 text-xs font-bold text-red-400 hover:bg-red-600 hover:text-white transition-colors"
+              >
+                Leave Group
               </button>
             </div>
           </div>
