@@ -1,13 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
 import {
   Send, Hash, Lock, LogOut, Power, Plus, UserPlus, LogIn,
   ShieldAlert, Users, MessageSquare, CheckCheck, Trash2,
   MoreVertical, Pin, Settings, Eye, Crown, X, Award,
   Image as ImageIcon, Reply, Loader2, ArrowLeft, Pencil, Check,
-  ChevronDown, ChevronRight, Info, UserMinus, Search, Smile, Copy
+  ChevronDown, ChevronRight, Info, UserMinus, Search, Smile, Copy,
+  SmilePlus, ArrowDown, History
 } from 'lucide-react';
 import { database } from '@/lib/firebase';
-import { ref, push, onValue, get, set, onDisconnect, update, remove } from 'firebase/database';
+import { ref, push, onValue, get, set, onDisconnect, update, remove, query, limitToLast } from 'firebase/database';
 import UserProfileModal, { UserProfileData } from './UserProfileModal';
 
 interface SecretChatProps {
@@ -33,6 +34,8 @@ interface ChatMessage {
   replyTo?: ReplyContext;
   edited?: boolean;
   editedAt?: number;
+  // emoji -> { username: true }
+  reactions?: Record<string, Record<string, boolean>>;
 }
 
 interface GroupChat {
@@ -52,6 +55,36 @@ const IMGBB_API_KEY = '9e341096967527234e9d141032f6a8c5';
    travel through the same message pipeline. */
 const GROUP_PREFIX = 'gc_';
 const EDIT_WINDOW_MS = 15 * 60 * 1000; // messages can only be edited for 15 minutes
+
+/* Unread indicator shown on the right of every sidebar row (WhatsApp style).
+   true  -> green pill with the unread count  (e.g. 3)
+   false -> plain green dot, no number */
+const SHOW_UNREAD_COUNT = true;
+const UNREAD_GREEN = '#25d366';
+
+/* ------------------------------------------------------------------ */
+/* Reactions (Instagram style)                                        */
+/* ------------------------------------------------------------------ */
+const QUICK_REACTIONS = ['❤️', '😂', '😮', '😢', '🔥', '👍'];
+const DOUBLE_TAP_REACTION = '❤️';
+
+/* ------------------------------------------------------------------ */
+/* Message windowing / pagination                                     */
+/* Only a slice of the history is ever downloaded or rendered.        */
+/* ------------------------------------------------------------------ */
+const MESSAGE_WINDOW_START = 200; // messages pulled from the DB on open
+const LOAD_MORE_BATCH = 200;      // extra messages pulled per "load older"
+const VISIBLE_STEP = 40;          // messages rendered per "load older"
+const SCROLL_LOAD_TRIGGER = 60;   // px from the top that triggers loading
+
+/* ------------------------------------------------------------------ */
+/* Swipe-right-to-reply gesture (mobile)                              */
+/* ------------------------------------------------------------------ */
+const SWIPE_THRESHOLD = 60; // px of travel needed to arm the reply
+const SWIPE_MAX = 88;       // px the bubble can travel
+const SWIPE_LOCK_PX = 8;    // movement before the gesture axis is decided
+const SWIPE_SLOP = 0.6;     // rubber-band factor
+const DOUBLE_TAP_MS = 300;  // window for the double-tap heart
 const GROUP_EMOJIS = ['👥', '🔥', '🎮', '📚', '🧠', '🎵', '⚽', '🍕', '💀', '🌈', '🧪', '🐧'];
 
 const isGroupKey = (channelKey: string) => channelKey.startsWith(GROUP_PREFIX);
@@ -103,8 +136,21 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const [editingMessage, setEditingMessage] = useState<ChatMessage | null>(null);
   const [nowTick, setNowTick] = useState<number>(() => Date.now());
 
-  // Swipe Gesture Ref/State
-  const touchStartXRef = useRef<number | null>(null);
+  // Swipe Gesture Ref/State. The drag visuals are written straight onto the
+  // DOM nodes so a 60fps swipe never triggers a React re-render.
+  const swipeRef = useRef<{
+    id: string;
+    startX: number;
+    startY: number;
+    rawDx: number;
+    dx: number;
+    horizontal: boolean;
+    locked: boolean;
+    armed: boolean;
+    content: HTMLElement | null;
+    icon: HTMLElement | null;
+  } | null>(null);
+  const lastTapRef = useRef<{ id: string; at: number }>({ id: '', at: 0 });
 
   const [showNewDMModal, setShowNewDMModal] = useState(false);
   const [selectedDMUser, setSelectedDMUser] = useState('');
@@ -132,6 +178,14 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
   // Message Options dropdown state
   const [activeMessageMenuId, setActiveMessageMenuId] = useState<string | null>(null);
+  // Emoji reaction picker state
+  const [activeReactionPickerId, setActiveReactionPickerId] = useState<string | null>(null);
+
+  // Pagination state
+  const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
+  const [loadedLimit, setLoadedLimit] = useState<number>(MESSAGE_WINDOW_START);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
   // Popover refs so "click anywhere" can dismiss them
   const messageMenuRef = useRef<HTMLDivElement | null>(null);
@@ -146,6 +200,11 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const [badgeCodeInput, setBadgeCodeInput] = useState('');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+  const pendingChannelJumpRef = useRef(true);
+  const pendingScrollRestoreRef = useRef<{ prevHeight: number; prevTop: number } | null>(null);
+  const loadingOlderTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keeps the latest active channel available inside firebase listeners
   const activeChannelRef = useRef<string>(activeChannel);
@@ -153,14 +212,12 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     activeChannelRef.current = activeChannel;
   }, [activeChannel]);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
+    messagesEndRef.current?.scrollIntoView({ behavior, block: 'end' });
   };
 
-  useEffect(() => {
-    scrollToBottom();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rawMessages, activeChannel, typingUsers]);
+  /* The auto-scroll and scroll-anchoring effects live further down, right
+     after `displayedMessages` is computed (they depend on it). */
 
   /* ------------------------------------------------------------------ */
   /* Ticking clock: lets the "Edit" option vanish the moment the        */
@@ -269,12 +326,13 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   /* CLICK ANYWHERE -> DISMISS OPEN POPUPS (dropdowns)                   */
   /* ------------------------------------------------------------------ */
   useEffect(() => {
-    if (!activeMessageMenuId) return;
+    if (!activeMessageMenuId && !activeReactionPickerId) return;
 
     const handleOutsideClick = (event: MouseEvent | TouchEvent) => {
       const target = event.target as Node | null;
       if (messageMenuRef.current && target && messageMenuRef.current.contains(target)) return;
       setActiveMessageMenuId(null);
+      setActiveReactionPickerId(null);
     };
 
     document.addEventListener('mousedown', handleOutsideClick);
@@ -283,7 +341,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       document.removeEventListener('mousedown', handleOutsideClick);
       document.removeEventListener('touchstart', handleOutsideClick);
     };
-  }, [activeMessageMenuId]);
+  }, [activeMessageMenuId, activeReactionPickerId]);
 
   useEffect(() => {
     if (!showChannelMenu) return;
@@ -308,6 +366,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       if (e.key !== 'Escape') return;
       if (activeMessageMenuId) {
         setActiveMessageMenuId(null);
+      } else if (activeReactionPickerId) {
+        setActiveReactionPickerId(null);
       } else if (showChannelMenu) {
         setShowChannelMenu(false);
       } else if (editingMessage) {
@@ -322,7 +382,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeMessageMenuId, showChannelMenu, editingMessage, replyingTo, expandedImageUrl]);
+  }, [activeMessageMenuId, activeReactionPickerId, showChannelMenu, editingMessage, replyingTo, expandedImageUrl]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInputMessage(e.target.value);
@@ -471,7 +531,10 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
     fetchUsersAndProfiles();
 
-    const messagesRef = ref(database, 'messages');
+    // Only the newest slice of the database is downloaded. Growing
+    // `loadedLimit` (the "load older messages" action) re-subscribes with a
+    // wider window instead of ever holding the whole history in memory.
+    const messagesRef = query(ref(database, 'messages'), limitToLast(loadedLimit));
     const unsubscribe = onValue(messagesRef, (snapshot) => {
       const data = snapshot.val();
       if (data) {
@@ -487,9 +550,11 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           replyTo: value.replyTo || undefined,
           edited: value.edited || false,
           editedAt: value.editedAt || 0,
+          reactions: value.reactions || {},
         }));
 
         setRawMessages(loaded);
+        setIsLoadingOlder(false);
 
         const dmUsers = new Set<string>();
         loaded.forEach((msg) => {
@@ -521,7 +586,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     });
 
     return () => unsubscribe();
-  }, [currentUser, activeChannel]);
+  }, [currentUser, activeChannel, loadedLimit]);
 
   /* ------------------------------------------------------------------ */
   /* SEND / EDIT MESSAGES                                               */
@@ -694,24 +759,179 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     }
   };
 
-  const handleTouchStart = (e: React.TouchEvent) => {
-    touchStartXRef.current = e.touches[0].clientX;
+  /* ------------------------------------------------------------------ */
+  /* REACTIONS                                                          */
+  /* ------------------------------------------------------------------ */
+  const toggleReaction = async (msg: ChatMessage, emoji: string) => {
+    if (!currentUser) return;
+
+    const usersForEmoji = msg.reactions?.[emoji] || {};
+    const iReacted = !!usersForEmoji[currentUser];
+    const others = Object.keys(usersForEmoji).filter((u) => u !== currentUser);
+
+    try {
+      if (iReacted) {
+        if (others.length > 0) {
+          await remove(ref(database, `messages/${msg.id}/reactions/${emoji}/${currentUser}`));
+        } else {
+          // last one out — drop the emoji node so the pill disappears cleanly
+          await remove(ref(database, `messages/${msg.id}/reactions/${emoji}`));
+        }
+      } else {
+        await update(ref(database, `messages/${msg.id}/reactions/${emoji}`), {
+          [currentUser]: true,
+        });
+      }
+    } catch (err) {
+      console.error('Error toggling reaction:', err);
+    }
+
+    setActiveReactionPickerId(null);
   };
 
-  const handleTouchEnd = (e: React.TouchEvent, msg: ChatMessage) => {
-    if (touchStartXRef.current === null) return;
-    const touchEndX = e.changedTouches[0].clientX;
-    const swipeDistance = touchEndX - touchStartXRef.current;
+  const buzz = (ms: number) => {
+    const nav = typeof navigator !== 'undefined' ? (navigator as any) : null;
+    if (nav && typeof nav.vibrate === 'function') nav.vibrate(ms);
+  };
 
-    if (swipeDistance > 60) {
+  /* ------------------------------------------------------------------ */
+  /* SWIPE RIGHT TO REPLY (mobile)                                      */
+  /* The translate + the revealed reply icon are written directly onto  */
+  /* the DOM while dragging, so the gesture stays smooth and the message */
+  /* list never re-renders mid-swipe.                                   */
+  /* ------------------------------------------------------------------ */
+  const paintSwipeRest = (content: HTMLElement, icon: HTMLElement, animate: boolean) => {
+    content.style.transition = animate ? 'transform 200ms cubic-bezier(0.22, 1, 0.36, 1)' : 'none';
+    content.style.transform = 'translateX(0px)';
+    icon.style.transition = animate
+      ? 'opacity 200ms ease-out, transform 200ms ease-out, background-color 200ms ease-out'
+      : 'none';
+    icon.style.opacity = '0';
+    icon.style.transform = 'translateY(-50%) scale(0.6)';
+    icon.style.backgroundColor = 'transparent';
+    icon.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+    icon.style.color = '#34d399';
+  };
+
+  const handleTouchStart = (e: React.TouchEvent, msg: ChatMessage) => {
+    const row = e.currentTarget as HTMLElement;
+    const touch = e.touches[0];
+    if (!touch) return;
+
+    swipeRef.current = {
+      id: msg.id,
+      startX: touch.clientX,
+      startY: touch.clientY,
+      rawDx: 0,
+      dx: 0,
+      horizontal: false,
+      locked: false,
+      armed: false,
+      content: row.querySelector<HTMLElement>('[data-swipe-content]'),
+      icon: row.querySelector<HTMLElement>('[data-swipe-icon]'),
+    };
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const s = swipeRef.current;
+    if (!s || !s.content || !s.icon) return;
+    const touch = e.touches[0];
+    if (!touch) return;
+
+    s.rawDx = touch.clientX - s.startX;
+    const dy = touch.clientY - s.startY;
+
+    if (!s.locked) {
+      if (Math.abs(s.rawDx) < SWIPE_LOCK_PX && Math.abs(dy) < SWIPE_LOCK_PX) return;
+      s.locked = true;
+      // Left drags and mostly-vertical gestures are handed back to the
+      // browser so scrolling still feels native.
+      s.horizontal = s.rawDx > 0 && Math.abs(s.rawDx) > Math.abs(dy);
+      if (!s.horizontal) return;
+    }
+    if (!s.horizontal) return;
+
+    // rubber-band: the further you drag, the heavier it gets
+    const offset = Math.min(s.rawDx * SWIPE_SLOP, SWIPE_MAX);
+    s.dx = offset;
+    const progress = Math.min(offset / SWIPE_THRESHOLD, 1);
+    const armed = progress >= 1;
+
+    s.content.style.transition = 'none';
+    s.content.style.transform = `translateX(${offset}px)`;
+
+    s.icon.style.transition = 'none';
+    s.icon.style.opacity = String(progress);
+    s.icon.style.transform = `translateY(-50%) scale(${0.6 + progress * 0.45})`;
+
+    if (armed !== s.armed) {
+      s.armed = armed;
+      if (armed) {
+        // locked on: fill the icon and give a short haptic tick
+        s.icon.style.backgroundColor = 'rgba(16, 185, 129, 0.25)';
+        s.icon.style.borderColor = '#34d399';
+        s.icon.style.color = '#ffffff';
+        buzz(12);
+      } else {
+        s.icon.style.backgroundColor = 'transparent';
+        s.icon.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+        s.icon.style.color = '#34d399';
+      }
+    }
+  };
+
+  const finishSwipe = (msg: ChatMessage) => {
+    const s = swipeRef.current;
+    swipeRef.current = null;
+    if (!s) return;
+
+    if (s.content && s.icon) paintSwipeRest(s.content, s.icon, true);
+
+    const armed = s.horizontal && s.dx >= SWIPE_THRESHOLD;
+
+    if (armed) {
+      // snap the icon back with a little pulse as the reply bar appears
+      if (s.icon) {
+        s.icon.style.transition = 'transform 220ms ease-out, opacity 220ms ease-out';
+        s.icon.style.opacity = '1';
+        s.icon.style.transform = 'translateY(-50%) scale(1.15)';
+        setTimeout(() => {
+          if (s.icon) {
+            s.icon.style.opacity = '0';
+            s.icon.style.transform = 'translateY(-50%) scale(0.6)';
+          }
+        }, 150);
+      }
+
       setReplyingTo({
         id: msg.id,
         sender: msg.sender,
         text: msg.text || (msg.imageUrl ? '📷 Photo' : ''),
         imageUrl: msg.imageUrl,
       });
+      return;
     }
-    touchStartXRef.current = null;
+
+    // a tap (no meaningful drag) — two of them quickly = quick ❤️ reaction
+    if (!s.horizontal || Math.abs(s.rawDx) < SWIPE_LOCK_PX) {
+      const now = Date.now();
+      if (lastTapRef.current.id === msg.id && now - lastTapRef.current.at < DOUBLE_TAP_MS) {
+        lastTapRef.current = { id: '', at: 0 };
+        toggleReaction(msg, DOUBLE_TAP_REACTION);
+      } else {
+        lastTapRef.current = { id: msg.id, at: now };
+      }
+    }
+  };
+
+  const handleTouchEnd = (_e: React.TouchEvent, msg: ChatMessage) => {
+    finishSwipe(msg);
+  };
+
+  const handleTouchCancel = () => {
+    const s = swipeRef.current;
+    swipeRef.current = null;
+    if (s && s.content && s.icon) paintSwipeRest(s.content, s.icon, true);
   };
 
   /* ------------------------------------------------------------------ */
@@ -852,7 +1072,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     ? groups[groupIdFromChannel(activeChannel)] || null
     : null;
 
-  const displayedMessages = rawMessages.filter((msg) => {
+  /* Every downloaded message that belongs to the open chat */
+  const channelMessages = rawMessages.filter((msg) => {
     if (activeChannel === 'general') {
       return msg.receiver === 'general';
     }
@@ -864,6 +1085,81 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       (msg.sender === activeChannel && msg.receiver === currentUser)
     );
   });
+
+  /* ...but only the newest slice of them is actually rendered */
+  const visibleMessageCount = visibleCounts[activeChannel] ?? VISIBLE_STEP;
+  const displayedMessages = channelMessages.slice(
+    Math.max(0, channelMessages.length - visibleMessageCount)
+  );
+
+  const olderInMemory = channelMessages.length - displayedMessages.length;
+  const hasOlderInMemory = olderInMemory > 0;
+  const windowIsFull = rawMessages.length >= loadedLimit;
+  const canLoadOlder = hasOlderInMemory || windowIsFull;
+
+  /* Load older: first reveal what is already downloaded (instant), and only
+     then widen the DB window. Growing the window re-subscribes with a bigger
+     limitToLast() and the same limitToLast() path is what keeps the initial
+     download small. */
+  const loadOlderMessages = () => {
+    const el = scrollContainerRef.current;
+    if (el) {
+      pendingScrollRestoreRef.current = { prevHeight: el.scrollHeight, prevTop: el.scrollTop };
+    }
+
+    setVisibleCounts((prev) => ({
+      ...prev,
+      [activeChannel]: (prev[activeChannel] ?? VISIBLE_STEP) + VISIBLE_STEP,
+    }));
+
+    if (!hasOlderInMemory && windowIsFull && !isLoadingOlder) {
+      setIsLoadingOlder(true);
+      setLoadedLimit((limit) => limit + LOAD_MORE_BATCH);
+      if (loadingOlderTimeoutRef.current) clearTimeout(loadingOlderTimeoutRef.current);
+      loadingOlderTimeoutRef.current = setTimeout(() => setIsLoadingOlder(false), 4000);
+    }
+  };
+
+  const handleMessagesScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+    stickToBottomRef.current = distanceFromBottom < 120;
+    setShowJumpToLatest(distanceFromBottom > 400);
+
+    if (el.scrollTop < SCROLL_LOAD_TRIGGER && canLoadOlder) {
+      loadOlderMessages();
+    }
+  };
+
+  /* Auto-scroll on new messages — but only while the user is already at the
+     bottom, so loading older ones never yanks them away from where they
+     were reading. */
+  useEffect(() => {
+    if (!stickToBottomRef.current) return;
+    const instant = pendingChannelJumpRef.current;
+    scrollToBottom(instant ? 'auto' : 'smooth');
+    if (displayedMessages.length > 0) pendingChannelJumpRef.current = false;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rawMessages, typingUsers, activeChannel]);
+
+  /* Opening a chat jumps straight to the newest message */
+  useEffect(() => {
+    stickToBottomRef.current = true;
+    setShowJumpToLatest(false);
+    pendingChannelJumpRef.current = true;
+  }, [activeChannel]);
+
+  /* Keep the viewport anchored when older messages are prepended */
+  useLayoutEffect(() => {
+    const el = scrollContainerRef.current;
+    const pending = pendingScrollRestoreRef.current;
+    if (!el || !pending) return;
+    el.scrollTop = el.scrollHeight - pending.prevHeight + pending.prevTop;
+    pendingScrollRestoreRef.current = null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [displayedMessages.length, rawMessages.length]);
 
   // Calculate the single last seen message ID for current user
   const selfReadMessages = displayedMessages.filter((msg) => {
@@ -928,6 +1224,34 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       <span>{group.emoji || '👥'}</span>
     </div>
   );
+
+  /* Unread indicator for sidebar rows — WhatsApp style green, bottom of the
+     row's right side. Shows a count pill, or a bare dot when
+     SHOW_UNREAD_COUNT is false. */
+  const renderUnreadBadge = (count: number) => {
+    if (count <= 0) return null;
+    const label = count > 99 ? '99+' : String(count);
+
+    if (!SHOW_UNREAD_COUNT) {
+      return (
+        <span
+          title={`${count} unread message${count === 1 ? '' : 's'}`}
+          className="ml-auto h-2.5 w-2.5 shrink-0 rounded-full shadow-sm"
+          style={{ backgroundColor: UNREAD_GREEN }}
+        />
+      );
+    }
+
+    return (
+      <span
+        title={`${count} unread message${count === 1 ? '' : 's'}`}
+        className="ml-auto flex h-5 min-w-[20px] shrink-0 items-center justify-center rounded-full px-1.5 text-[10px] font-bold text-white shadow-sm"
+        style={{ backgroundColor: UNREAD_GREEN }}
+      >
+        {label}
+      </span>
+    );
+  };
 
   const renderChannelAvatar = (channelKey: string, size = 'h-9 w-9') => {
     if (channelKey === 'general') {
@@ -996,14 +1320,62 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   /* ------------------------------------------------------------------ */
   /* MESSAGE 3-DOT DROPDOWN                                             */
   /* ------------------------------------------------------------------ */
-  const renderMessageMenu = (msg: ChatMessage, isSelf: boolean) => {
+  const renderMessageControls = (msg: ChatMessage, isSelf: boolean) => {
     const editable = canEditMessage(msg);
     const minsLeft = editMinutesLeft(msg);
+    const pickerOpen = activeReactionPickerId === msg.id;
+    const me = currentUser || '';
+    const myReactions = Object.keys(msg.reactions || {}).filter(
+      (emoji) => msg.reactions?.[emoji]?.[me]
+    );
 
     return (
-      <div ref={messageMenuRef} className="relative">
+      <div ref={messageMenuRef} className="relative flex items-center gap-0.5">
+        {/* QUICK REACTION BUTTON */}
         <button
-          onClick={() => setActiveMessageMenuId(activeMessageMenuId === msg.id ? null : msg.id)}
+          onClick={() => {
+            setActiveReactionPickerId(pickerOpen ? null : msg.id);
+            setActiveMessageMenuId(null);
+          }}
+          title="React to this message"
+          className={`p-1 rounded transition-colors hover:bg-slate-700 hover:text-white ${
+            pickerOpen ? 'bg-slate-700 text-white' : 'text-slate-400'
+          }`}
+        >
+          <SmilePlus className="h-3.5 w-3.5" />
+        </button>
+
+        {/* REACTION PICKER */}
+        {pickerOpen && (
+          <div
+            className={`absolute z-40 top-7 flex items-center gap-0.5 rounded-full border border-slate-700 bg-[#1f2c34] px-1.5 py-1 shadow-2xl ${
+              isSelf ? 'right-0' : 'left-0'
+            }`}
+          >
+            {QUICK_REACTIONS.map((emoji) => {
+              const mine = myReactions.includes(emoji);
+              return (
+                <button
+                  key={emoji}
+                  onClick={() => toggleReaction(msg, emoji)}
+                  title={mine ? `Remove ${emoji}` : `React ${emoji}`}
+                  className={`flex h-8 w-8 items-center justify-center rounded-full text-base leading-none transition-transform hover:scale-125 active:scale-95 ${
+                    mine ? 'bg-emerald-600/30 ring-1 ring-emerald-500/60' : 'hover:bg-slate-700'
+                  }`}
+                >
+                  {emoji}
+                </button>
+              );
+            })}
+          </div>
+        )}
+
+        {/* 3-DOT MENU */}
+        <button
+          onClick={() => {
+            setActiveMessageMenuId(activeMessageMenuId === msg.id ? null : msg.id);
+            setActiveReactionPickerId(null);
+          }}
           className="p-1 rounded text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
         >
           <MoreVertical className="h-3.5 w-3.5" />
@@ -1011,10 +1383,28 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
         {activeMessageMenuId === msg.id && (
           <div
-            className={`absolute z-30 w-44 rounded-xl border border-slate-800 bg-[#1f2c34] p-1 shadow-2xl top-6 ${
+            className={`absolute z-30 w-44 rounded-xl border border-slate-800 bg-[#1f2c34] p-1 shadow-2xl top-7 ${
               isSelf ? 'right-0' : 'left-0'
             }`}
           >
+            {/* QUICK REACTIONS INSIDE THE MENU */}
+            <div className="mb-1 flex items-center justify-between gap-0.5 border-b border-slate-700/60 px-0.5 pb-1.5">
+              {QUICK_REACTIONS.map((emoji) => (
+                <button
+                  key={emoji}
+                  onClick={() => toggleReaction(msg, emoji)}
+                  title={`React ${emoji}`}
+                  className={`flex h-7 w-7 items-center justify-center rounded-full text-sm leading-none transition-transform hover:scale-125 active:scale-95 ${
+                    myReactions.includes(emoji)
+                      ? 'bg-emerald-600/30 ring-1 ring-emerald-500/60'
+                      : 'hover:bg-slate-700'
+                  }`}
+                >
+                  {emoji}
+                </button>
+              ))}
+            </div>
+
             <button
               onClick={() => {
                 setReplyingTo({
@@ -1317,11 +1707,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                   >
                     general-chat
                   </span>
-                  {getUnreadCount('general') > 0 && (
-                    <span className="ml-auto rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                      {getUnreadCount('general')}
-                    </span>
-                  )}
+                  {renderUnreadBadge(getUnreadCount('general'))}
                 </button>
               )}
             </div>
@@ -1383,11 +1769,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                               {memberCount} {memberCount === 1 ? 'member' : 'members'}
                             </span>
                           </div>
-                          {unread > 0 && (
-                            <span className="ml-1 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                              {unread > 99 ? '99+' : unread}
-                            </span>
-                          )}
+                          {renderUnreadBadge(unread)}
                         </button>
                       );
                     })}
@@ -1461,11 +1843,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                               {isOnline ? 'Online' : 'Offline'}
                             </span>
                           </div>
-                          {unread > 0 && (
-                            <span className="ml-1 rounded-full bg-red-500 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                              {unread > 99 ? '99+' : unread}
-                            </span>
-                          )}
+                          {renderUnreadBadge(unread)}
                         </button>
                       );
                     })}
@@ -1621,7 +1999,37 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         )}
 
         {/* MESSAGES LIST */}
-        <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-[#0b141a]">
+        <div className="relative flex-1 overflow-hidden">
+          <div
+            ref={scrollContainerRef}
+            onScroll={handleMessagesScroll}
+            className="h-full overflow-y-auto p-4 space-y-2 bg-[#0b141a]"
+          >
+          {/* LOAD OLDER — reveals already-downloaded messages instantly, and
+              widens the DB window when there is nothing left in memory */}
+          {canLoadOlder && (
+            <div className="flex flex-col items-center justify-center gap-1 py-2">
+              <button
+                onClick={loadOlderMessages}
+                disabled={isLoadingOlder}
+                className="flex items-center gap-1.5 rounded-full border border-slate-700 bg-[#202c33] px-3 py-1.5 text-[11px] font-bold text-slate-300 hover:border-emerald-500/50 hover:text-emerald-400 disabled:opacity-60 transition-colors"
+              >
+                {isLoadingOlder ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" /> Loading older messages…
+                  </>
+                ) : (
+                  <>
+                    <History className="h-3 w-3" /> Load older messages
+                  </>
+                )}
+              </button>
+              <span className="text-[10px] text-slate-600">
+                {hasOlderInMemory ? `${olderInMemory} older message${olderInMemory === 1 ? '' : 's'} ready` : 'scroll up to load more'}
+              </span>
+            </div>
+          )}
+
           {displayedMessages.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-center text-slate-500">
               <MessageSquare className="h-10 w-10 mb-2 opacity-30" />
@@ -1634,6 +2042,11 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
               const readUsers = Object.keys(msg.readBy || {}).filter((u) => u !== msg.sender);
               const isRead = readUsers.length > 0;
+
+              const reactionEntries = Object.entries(msg.reactions || {})
+                .map(([emoji, users]) => ({ emoji, users: Object.keys(users || {}) }))
+                .filter((entry) => entry.users.length > 0)
+                .sort((a, b) => b.users.length - a.users.length);
 
               // Check if previous message exists and has the same sender
               const prevMsg = idx > 0 ? displayedMessages[idx - 1] : null;
@@ -1651,13 +2064,29 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                   )}
                   <div
                     id={`msg-${msg.id}`}
-                    onTouchStart={handleTouchStart}
+                    onTouchStart={(e) => handleTouchStart(e, msg)}
+                    onTouchMove={handleTouchMove}
                     onTouchEnd={(e) => handleTouchEnd(e, msg)}
-                    className={`flex flex-col ${isSelf ? 'items-end' : 'items-start'} relative group transition-transform duration-200 ${
-                      isSequence ? 'mt-1' : 'mt-3'
-                    }`}
+                    onTouchCancel={handleTouchCancel}
+                    style={{ touchAction: 'pan-y' }}
+                    className={`relative group ${isSequence ? 'mt-1' : 'mt-3'}`}
                   >
+                    {/* Reply affordance revealed while swiping right */}
                     <div
+                      data-swipe-icon
+                      className="pointer-events-none absolute left-1 top-1/2 z-0 flex h-9 w-9 items-center justify-center rounded-full border border-emerald-500/30 bg-[#202c33] text-emerald-400 opacity-0"
+                      style={{ transform: 'translateY(-50%) scale(0.6)' }}
+                    >
+                      <Reply className="h-4 w-4" />
+                    </div>
+
+                    <div
+                      data-swipe-content
+                      className={`relative z-10 flex flex-col ${isSelf ? 'items-end' : 'items-start'}`}
+                    >
+                    <div
+                      onDoubleClick={() => toggleReaction(msg, DOUBLE_TAP_REACTION)}
+                      title="Double tap to react ❤️"
                       className={`max-w-[85%] sm:max-w-[65%] rounded-2xl px-3.5 py-2 shadow-sm text-sm relative ${
                         isSelf
                           ? 'bg-[#005c4b] text-[#e9edef] rounded-tr-none'
@@ -1678,7 +2107,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                             {renderDiscordBadge(msg.sender)}
                           </div>
 
-                          {renderMessageMenu(msg, isSelf)}
+                          {renderMessageControls(msg, isSelf)}
                         </div>
                       ) : (
                         /* Minimal dropdown for grouped messages */
@@ -1689,7 +2118,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                               : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'
                           }`}
                         >
-                          {renderMessageMenu(msg, isSelf)}
+                          {renderMessageControls(msg, isSelf)}
                         </div>
                       )}
 
@@ -1759,6 +2188,35 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                           : msg.receiver}
                       </div>
                     )}
+
+                    {/* REACTION PILLS (Instagram style) */}
+                    {reactionEntries.length > 0 && (
+                      <div
+                        className={`z-10 -mt-2 flex flex-wrap items-center gap-1 px-1 ${
+                          isSelf ? 'justify-end' : 'justify-start'
+                        }`}
+                      >
+                        {reactionEntries.map(({ emoji, users }) => {
+                          const mine = users.includes(currentUser);
+                          return (
+                            <button
+                              key={emoji}
+                              onClick={() => toggleReaction(msg, emoji)}
+                              title={`${emoji} ${users.join(', ')}`}
+                              className={`flex items-center gap-1 rounded-full border px-1.5 py-0.5 text-[11px] shadow-sm transition-all active:scale-95 ${
+                                mine
+                                  ? 'border-emerald-500/70 bg-emerald-600/30 text-emerald-50'
+                                  : 'border-slate-700 bg-[#202c33] text-slate-300 hover:border-slate-500'
+                              }`}
+                            >
+                              <span className="leading-none">{emoji}</span>
+                              <span className="font-bold leading-none">{users.length}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                    </div>
                   </div>
                 </React.Fragment>
               );
@@ -1779,6 +2237,22 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           )}
 
           <div ref={messagesEndRef} />
+          </div>
+
+          {/* JUMP TO LATEST */}
+          {showJumpToLatest && (
+            <button
+              onClick={() => {
+                stickToBottomRef.current = true;
+                setShowJumpToLatest(false);
+                scrollToBottom('smooth');
+              }}
+              title="Jump to latest messages"
+              className="absolute bottom-4 right-4 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-[#202c33] text-emerald-400 shadow-2xl hover:bg-slate-700 transition-colors"
+            >
+              <ArrowDown className="h-5 w-5" />
+            </button>
+          )}
         </div>
 
         {/* INPUT & ATTACHMENT PREVIEW PANEL */}
