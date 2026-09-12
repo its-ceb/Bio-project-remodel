@@ -1,12 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
 import {
-  Bot, Send, User, Sparkles, RefreshCw, BookOpen, AlertTriangle, Stethoscope, X
+  Bot, Send, User, Sparkles, RefreshCw, BookOpen, AlertTriangle, X
 } from 'lucide-react';
 import {
   askGeminiBiology,
   describeGeminiError,
   hasGeminiApiKey,
-  testGeminiConnection,
   type ChatTurn,
 } from '@/lib/gemini';
 
@@ -43,7 +42,6 @@ export default function AIAssistant({ isOpen = true, onClose }: AIAssistantProps
   const [messages, setMessages] = useState<Message[]>([WELCOME]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [isTesting, setIsTesting] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
   const keyPresent = hasGeminiApiKey();
@@ -128,35 +126,6 @@ export default function AIAssistant({ isOpen = true, onClose }: AIAssistantProps
     ask(failed.retryQuestion, history);
   };
 
-  /** One-click "is my key actually working?" check. */
-  const handleTestConnection = async () => {
-    if (isTesting) return;
-    setIsTesting(true);
-
-    const stamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-    const result = await testGeminiConnection();
-
-    setMessages((prev) => [
-      ...prev,
-      result.ok
-        ? {
-            id: `t-${Date.now()}`,
-            sender: 'ai' as const,
-            text: `Connection OK ✅\nModel: ${result.model}\nKey: ${result.keyPreview}\n${result.detail}`,
-            time: stamp,
-          }
-        : {
-            id: `t-${Date.now()}`,
-            sender: 'ai' as const,
-            text: `${result.detail}\n\nModel: ${result.model}\nKey: ${result.keyPreview}`,
-            time: stamp,
-            error: { message: result.detail, hint: result.hint ?? '' },
-          },
-    ]);
-
-    setIsTesting(false);
-  };
-
   return (
     <div className="flex flex-col h-[calc(100vh-8rem)] w-full rounded-2xl bg-slate-900 border border-slate-800 shadow-xl overflow-hidden font-sans">
       {/* HEADER */}
@@ -176,28 +145,16 @@ export default function AIAssistant({ isOpen = true, onClose }: AIAssistantProps
           </div>
         </div>
 
-        <div className="flex items-center gap-1">
+        {onClose && (
           <button
             type="button"
-            onClick={handleTestConnection}
-            disabled={isTesting}
-            title="Check the Gemini connection and your API key"
-            className="flex items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-1.5 text-[11px] font-bold text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-50 transition-colors"
+            onClick={onClose}
+            className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
+            aria-label="Close assistant"
           >
-            {isTesting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Stethoscope className="h-3.5 w-3.5" />}
-            Test key
+            <X className="h-4 w-4" />
           </button>
-          {onClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
-              aria-label="Close assistant"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          )}
-        </div>
+        )}
       </div>
 
       {/* MISSING KEY BANNER — says exactly what to do */}
@@ -205,16 +162,10 @@ export default function AIAssistant({ isOpen = true, onClose }: AIAssistantProps
         <div className="flex items-start gap-2 border-b border-amber-500/20 bg-amber-500/10 px-5 py-3 text-[11px] text-amber-300">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <div>
-            <p className="font-bold">No Gemini API key found in this build.</p>
+            <p className="font-bold">The AI tutor is unavailable right now.</p>
             <p className="mt-0.5 text-amber-200/80">
-              Add <code className="rounded bg-slate-900/60 px-1">VITE_GEMINI_API_KEY</code> to your{' '}
-              <code className="rounded bg-slate-900/60 px-1">.env</code> and to Netlify&apos;s environment
-              variables, then <strong>redeploy</strong> (Vite bakes env vars in at build time). For a quick
-              local test, run{' '}
-              <code className="rounded bg-slate-900/60 px-1">
-                localStorage.setItem(&apos;gemini_api_key&apos;, &apos;AQ...&apos;)
-              </code>{' '}
-              in the console and reload.
+              No Gemini API key is configured for this build, so questions cannot be answered. The
+              flashcards and MCQ practice work as normal.
             </p>
           </div>
         </div>
