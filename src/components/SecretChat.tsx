@@ -3,7 +3,7 @@ import {
   Send, Hash, Lock, LogOut, Power, Plus, UserPlus, LogIn, 
   ShieldAlert, Users, MessageSquare, CheckCheck, Trash2, 
   MoreVertical, Pin, Settings, Eye, Crown, X, Award, 
-  Image as ImageIcon, Reply, Loader2 
+  Image as ImageIcon, Reply, Loader2, ArrowLeft 
 } from 'lucide-react';
 import { database } from '@/lib/firebase';
 import { ref, push, onValue, get, set, onDisconnect, update, remove } from 'firebase/database';
@@ -81,6 +81,10 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
   // Participants sidebar state
   const [showParticipants, setShowParticipants] = useState(false);
+
+  // Mobile single-pane navigation: which panel is shown on small screens.
+  // Desktop (md+) ignores this and shows the relevant panels side by side.
+  const [mobilePanel, setMobilePanel] = useState<'list' | 'chat' | 'participants'>('list');
 
   // Message Options dropdown state
   const [activeMessageMenuId, setActiveMessageMenuId] = useState<string | null>(null);
@@ -678,7 +682,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   return (
     <div className="fixed inset-0 z-50 flex bg-[#0b141a] font-sans text-slate-100 overflow-hidden">
       {/* SIDEBAR */}
-      <aside className="w-64 sm:w-72 flex flex-col border-r border-slate-800 bg-[#111b21] shrink-0">
+      <aside className={`${mobilePanel === 'list' ? 'flex' : 'hidden'} md:flex w-full md:w-64 lg:w-72 flex-col border-r border-slate-800 bg-[#111b21] shrink-0`}>
         <div
           onClick={() => setEditingProfile(true)}
           title="Click to edit your profile"
@@ -719,7 +723,10 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                 Channels
               </span>
               <button
-                onClick={() => setActiveChannel('general')}
+                onClick={() => {
+                  setActiveChannel('general');
+                  setMobilePanel('chat');
+                }}
                 className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                   activeChannel === 'general'
                     ? 'bg-[#2a3942] text-emerald-400 font-bold'
@@ -748,7 +755,10 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                 {activeConversations.map((username) => (
                   <button
                     key={username}
-                    onClick={() => setActiveChannel(username)}
+                    onClick={() => {
+                      setActiveChannel(username);
+                      setMobilePanel('chat');
+                    }}
                     className={`w-full flex items-center justify-between px-3 py-2.5 rounded-xl text-xs font-semibold transition-all ${
                       activeChannel === username
                         ? 'bg-[#2a3942] text-emerald-400 font-bold'
@@ -793,10 +803,16 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       </aside>
 
       {/* MESSAGING CONTAINER */}
-      <main className="flex-1 flex flex-col bg-[#0b141a] relative">
+      <main className={`${mobilePanel === 'chat' ? 'flex' : 'hidden'} md:flex flex-1 flex-col bg-[#0b141a] relative w-full`}>
         <header className="flex items-center justify-between border-b border-slate-800 bg-[#1f2c34] px-4 py-3 relative">
-          <div className="flex items-center gap-3">
-            <div className="relative">
+          <div className="flex items-center gap-2 sm:gap-3 overflow-hidden">
+            <button
+              onClick={() => setMobilePanel('list')}
+              className="md:hidden -ml-1 shrink-0 rounded-xl p-2 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </button>
+            <div className="relative shrink-0">
               {activeChannel === 'general' ? (
                 <div className="flex h-9 w-9 items-center justify-center rounded-full bg-slate-700 text-emerald-400 font-bold">
                   <Hash className="h-5 w-5" />
@@ -805,9 +821,9 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                 renderAvatar(activeChannel, 'h-9 w-9')
               )}
             </div>
-            <div>
+            <div className="overflow-hidden">
               <div className="flex items-center gap-2">
-                <h3 className="text-sm font-bold text-slate-100">
+                <h3 className="text-sm font-bold text-slate-100 truncate">
                   {activeChannel === 'general' ? '#general-chat' : activeChannel}
                 </h3>
                 {activeChannel !== 'general' && renderDiscordBadge(activeChannel)}
@@ -825,8 +841,10 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           <div className="flex items-center gap-2">
             <button
               onClick={() => {
-                if (!showParticipants) fetchUsersAndProfiles();
-                setShowParticipants((prev) => !prev);
+                const opening = !showParticipants;
+                if (opening) fetchUsersAndProfiles();
+                setShowParticipants(opening);
+                setMobilePanel(opening ? 'participants' : 'chat');
               }}
               title="Toggle participants"
               className={`p-2 rounded-xl transition-colors ${
@@ -1224,14 +1242,17 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
       {/* PARTICIPANTS SIDEBAR */}
       {showParticipants && (
-        <aside className="w-64 shrink-0 flex flex-col border-l border-slate-800 bg-[#111b21]">
+        <aside className={`${mobilePanel === 'participants' ? 'flex' : 'hidden'} md:flex w-full md:w-64 shrink-0 flex-col border-l border-slate-800 bg-[#111b21]`}>
           <div className="flex items-center justify-between border-b border-slate-800 bg-[#202c33] px-4 py-3.5">
             <div>
               <h4 className="text-xs font-bold text-slate-100">Participants</h4>
               <p className="text-[10px] text-slate-400">{allUsers.length} members</p>
             </div>
             <button
-              onClick={() => setShowParticipants(false)}
+              onClick={() => {
+                setShowParticipants(false);
+                setMobilePanel('chat');
+              }}
               className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
             >
               <X className="h-4 w-4" />
@@ -1544,6 +1565,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                       setConversations((prev) => [...prev, selectedDMUser]);
                     }
                     setActiveChannel(selectedDMUser);
+                    setMobilePanel('chat');
                     setShowNewDMModal(false);
                     setSelectedDMUser('');
                   }
