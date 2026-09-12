@@ -1,12 +1,24 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Bot, Send, User, Sparkles, RefreshCw, BookOpen } from 'lucide-react';
-import { askGeminiBiology } from '@/lib/gemini';
+import {
+  Bot, Send, User, Sparkles, RefreshCw, BookOpen, AlertTriangle, Stethoscope, X
+} from 'lucide-react';
+import {
+  askGeminiBiology,
+  describeGeminiError,
+  hasGeminiApiKey,
+  testGeminiConnection,
+  type ChatTurn,
+} from '@/lib/gemini';
 
 interface Message {
   id: string;
   sender: 'ai' | 'user';
   text: string;
   time: string;
+  /** set when a reply failed — shown as an error card with a retry action */
+  error?: { message: string; hint: string };
+  /** the question that produced this failure, so Retry can resend it */
+  retryQuestion?: string;
 }
 
 interface AIAssistantProps {
@@ -14,18 +26,27 @@ interface AIAssistantProps {
   onClose?: () => void;
 }
 
-export default function AIAssistant({ isOpen = true }: AIAssistantProps) {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      sender: 'ai',
-      text: 'Hello! I am your NCERT Biology AI Tutor. Ask me any conceptual question, request quick summaries, or ask for NEET-pattern practice questions!',
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    },
-  ]);
+const WELCOME: Message = {
+  id: 'welcome',
+  sender: 'ai',
+  text:
+    'Hello! I am your NCERT Biology AI Tutor. Ask me any conceptual question, request quick summaries, or ask for NEET-pattern practice questions!',
+  time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+};
+
+const QUICK_PROMPTS = [
+  { label: 'C4 Photosynthesis', icon: BookOpen, prompt: 'Summarize Photosynthesis in C4 plants' },
+  { label: 'Cell Cycle MCQs', icon: Sparkles, prompt: 'Give 3 NEET questions on Cell Cycle' },
+];
+
+export default function AIAssistant({ isOpen = true, onClose }: AIAssistantProps) {
+  const [messages, setMessages] = useState<Message[]>([WELCOME]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
+
+  const keyPresent = hasGeminiApiKey();
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -33,33 +54,107 @@ export default function AIAssistant({ isOpen = true }: AIAssistantProps) {
 
   if (!isOpen) return null;
 
-  const handleSend = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || isLoading) return;
+  /** previous turns, so the tutor remembers the conversation */
+  const buildHistory = (list: Message[]): ChatTurn[] =>
+    list
+      .filter((m) => !m.error && m.id !== 'welcome')
+      .slice(-10)
+      .map((m) => ({ role: m.sender === 'ai' ? ('model' as const) : ('user' as const), text: m.text }));
 
-    const userMsgText = input;
+  const ask = async (question: string, historyOverride?: Message[]) => {
+    const trimmed = question.trim();
+    if (!trimmed || isLoading) return;
+
+    const stamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
     const userMsg: Message = {
-      id: Date.now().toString(),
+      id: `u-${Date.now()}`,
       sender: 'user',
-      text: userMsgText,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      text: trimmed,
+      time: stamp,
     };
 
-    setMessages((prev) => [...prev, userMsg]);
+    const base = historyOverride ?? messages;
+    setMessages([...base, userMsg]);
     setInput('');
     setIsLoading(true);
 
-    const aiTextResponse = await askGeminiBiology(userMsgText);
+    try {
+      const reply = await askGeminiBiology(trimmed, buildHistory(base));
 
-    const aiResponse: Message = {
-      id: (Date.now() + 1).toString(),
-      sender: 'ai',
-      text: aiTextResponse,
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-    };
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `a-${Date.now()}`,
+          sender: 'ai',
+          text: reply,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      ]);
+    } catch (err) {
+      // Show EXACTLY what went wrong instead of a generic message
+      const { message, hint } = describeGeminiError(err);
+      console.error('Gemini error:', err);
 
-    setMessages((prev) => [...prev, aiResponse]);
-    setIsLoading(false);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `e-${Date.now()}`,
+          sender: 'ai',
+          text: message,
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          error: { message, hint },
+          retryQuestion: trimmed,
+        },
+      ]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSend = (e: React.FormEvent) => {
+    e.preventDefault();
+    ask(input);
+  };
+
+  /** Re-send the question that failed, without duplicating it in the thread. */
+  const handleRetry = (failed: Message) => {
+    if (!failed.retryQuestion) return;
+    const withoutFailure = messages.filter((m) => m.id !== failed.id && m.retryQuestion !== failed.retryQuestion);
+    const lastUser = [...withoutFailure].reverse().find((m) => m.sender === 'user');
+    const history = lastUser && lastUser.text === failed.retryQuestion
+      ? withoutFailure.filter((m) => m.id !== lastUser.id)
+      : withoutFailure;
+    ask(failed.retryQuestion, history);
+  };
+
+  /** One-click "is my key actually working?" check. */
+  const handleTestConnection = async () => {
+    if (isTesting) return;
+    setIsTesting(true);
+
+    const stamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    const result = await testGeminiConnection();
+
+    setMessages((prev) => [
+      ...prev,
+      result.ok
+        ? {
+            id: `t-${Date.now()}`,
+            sender: 'ai' as const,
+            text: `Connection OK ✅\nModel: ${result.model}\nKey: ${result.keyPreview}\n${result.detail}`,
+            time: stamp,
+          }
+        : {
+            id: `t-${Date.now()}`,
+            sender: 'ai' as const,
+            text: `${result.detail}\n\nModel: ${result.model}\nKey: ${result.keyPreview}`,
+            time: stamp,
+            error: { message: result.detail, hint: result.hint ?? '' },
+          },
+    ]);
+
+    setIsTesting(false);
   };
 
   return (
@@ -80,38 +175,94 @@ export default function AIAssistant({ isOpen = true }: AIAssistantProps) {
             <p className="text-xs text-slate-400">Instant doubt resolution & NCERT guidance</p>
           </div>
         </div>
+
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={handleTestConnection}
+            disabled={isTesting}
+            title="Check the Gemini connection and your API key"
+            className="flex items-center gap-1.5 rounded-lg border border-slate-700 px-2.5 py-1.5 text-[11px] font-bold text-slate-300 hover:bg-slate-800 hover:text-white disabled:opacity-50 transition-colors"
+          >
+            {isTesting ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Stethoscope className="h-3.5 w-3.5" />}
+            Test key
+          </button>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg p-2 text-slate-400 hover:bg-slate-800 hover:text-white transition-colors"
+              aria-label="Close assistant"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
       </div>
+
+      {/* MISSING KEY BANNER — says exactly what to do */}
+      {!keyPresent && (
+        <div className="flex items-start gap-2 border-b border-amber-500/20 bg-amber-500/10 px-5 py-3 text-[11px] text-amber-300">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <div>
+            <p className="font-bold">No Gemini API key found in this build.</p>
+            <p className="mt-0.5 text-amber-200/80">
+              Add <code className="rounded bg-slate-900/60 px-1">VITE_GEMINI_API_KEY</code> to your{' '}
+              <code className="rounded bg-slate-900/60 px-1">.env</code> and to Netlify&apos;s environment
+              variables, then <strong>redeploy</strong> (Vite bakes env vars in at build time). For a quick
+              local test, run{' '}
+              <code className="rounded bg-slate-900/60 px-1">
+                localStorage.setItem(&apos;gemini_api_key&apos;, &apos;AQ...&apos;)
+              </code>{' '}
+              in the console and reload.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* CHAT MESSAGES CONTAINER */}
       <div className="flex-1 overflow-y-auto p-5 space-y-4 bg-slate-950/50">
         {messages.map((msg) => {
           const isAi = msg.sender === 'ai';
           return (
-            <div
-              key={msg.id}
-              className={`flex gap-3 ${isAi ? 'items-start' : 'items-start flex-row-reverse'}`}
-            >
+            <div key={msg.id} className={`flex gap-3 ${isAi ? 'items-start' : 'items-start flex-row-reverse'}`}>
               <div
                 className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold ${
-                  isAi ? 'bg-emerald-600 text-white' : 'bg-slate-700 text-slate-200'
+                  msg.error ? 'bg-red-600/20 text-red-400' : isAi ? 'bg-emerald-600 text-white' : 'bg-slate-700 text-slate-200'
                 }`}
               >
-                {isAi ? <Bot className="h-4 w-4" /> : <User className="h-4 w-4" />}
+                {msg.error ? <AlertTriangle className="h-4 w-4" /> : isAi ? <Bot className="h-4 w-4" /> : <User className="h-4 w-4" />}
               </div>
 
               <div
                 className={`max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed whitespace-pre-wrap ${
-                  isAi
-                    ? 'bg-slate-900 border border-slate-800 text-slate-200 rounded-tl-none shadow-sm'
-                    : 'bg-emerald-600 text-white rounded-tr-none'
+                  msg.error
+                    ? 'bg-red-500/10 border border-red-500/30 text-red-200 rounded-tl-none shadow-sm'
+                    : isAi
+                      ? 'bg-slate-900 border border-slate-800 text-slate-200 rounded-tl-none shadow-sm'
+                      : 'bg-emerald-600 text-white rounded-tr-none'
                 }`}
               >
                 <p>{msg.text}</p>
-                <span
-                  className={`block text-[10px] mt-1.5 ${
-                    isAi ? 'text-slate-500' : 'text-emerald-200 text-right'
-                  }`}
-                >
+
+                {msg.error?.hint && (
+                  <p className="mt-2 border-t border-red-500/20 pt-2 text-[11px] text-red-300/90">
+                    {msg.error.hint}
+                  </p>
+                )}
+
+                {msg.error && msg.retryQuestion && (
+                  <button
+                    type="button"
+                    onClick={() => handleRetry(msg)}
+                    disabled={isLoading}
+                    className="mt-2.5 flex items-center gap-1.5 rounded-lg border border-red-400/30 bg-red-500/10 px-2.5 py-1.5 text-[11px] font-bold text-red-100 hover:bg-red-500/20 disabled:opacity-50 transition-colors"
+                  >
+                    <RefreshCw className="h-3 w-3" /> Retry
+                  </button>
+                )}
+
+                <span className={`block text-[10px] mt-1.5 ${isAi ? 'text-slate-500' : 'text-emerald-200 text-right'}`}>
                   {msg.time}
                 </span>
               </div>
@@ -132,20 +283,19 @@ export default function AIAssistant({ isOpen = true }: AIAssistantProps) {
 
       {/* QUICK SUGGESTIONS */}
       <div className="px-5 py-2.5 bg-slate-900 border-t border-slate-800/80 flex gap-2 overflow-x-auto text-xs text-slate-400">
-        <button
-          onClick={() => setInput('Summarize Photosynthesis in C4 plants')}
-          className="whitespace-nowrap px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 hover:text-slate-200 transition-colors border border-slate-700/50 flex items-center gap-1.5"
-        >
-          <BookOpen className="h-3.5 w-3.5 text-emerald-400" />
-          C4 Photosynthesis
-        </button>
-        <button
-          onClick={() => setInput('Give 3 NEET questions on Cell Cycle')}
-          className="whitespace-nowrap px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 hover:text-slate-200 transition-colors border border-slate-700/50 flex items-center gap-1.5"
-        >
-          <Sparkles className="h-3.5 w-3.5 text-indigo-400" />
-          Cell Cycle MCQs
-        </button>
+        {QUICK_PROMPTS.map((suggestion) => {
+          const Icon = suggestion.icon;
+          return (
+            <button
+              key={suggestion.label}
+              onClick={() => setInput(suggestion.prompt)}
+              className="whitespace-nowrap px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 hover:text-slate-200 transition-colors border border-slate-700/50 flex items-center gap-1.5"
+            >
+              <Icon className={`h-3.5 w-3.5 ${suggestion.icon === BookOpen ? 'text-emerald-400' : 'text-indigo-400'}`} />
+              {suggestion.label}
+            </button>
+          );
+        })}
       </div>
 
       {/* INPUT FORM */}

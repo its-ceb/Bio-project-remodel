@@ -8,12 +8,37 @@ import {
   X,
   Layers,
   Sparkles,
+  Wand2,
+  AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
 import { flashcards, type Flashcard, type UnitId } from '@/data/biology';
+import {
+  generateFlashcards,
+  describeGeminiError,
+  hasGeminiApiKey,
+  readAiCache,
+  writeAiCache,
+  clearAiCache,
+  UNIT_IDS,
+} from '@/lib/gemini';
 
 interface FlashcardsModuleProps {
   selectedUnit: UnitId | 'all';
 }
+
+/** How many cards one AI request produces. Bigger = fewer calls = fewer tokens. */
+const AI_BATCH_SIZE = 8;
+
+/** Human names so the prompt can describe the unit properly. */
+const UNIT_NAMES: Record<UnitId, string> = {
+  diversity: 'Diversity in the Living World',
+  cell: 'Structural Organisation in Plants and Animals',
+  plant: 'Plant Physiology',
+  human: 'Human Physiology',
+};
+
+const cacheName = (unit: UnitId | 'all') => `flashcards:${unit}`;
 
 function shuffleArray<T>(arr: T[]): T[] {
   const copy = [...arr];
@@ -25,25 +50,34 @@ function shuffleArray<T>(arr: T[]): T[] {
 }
 
 export default function FlashcardsModule({ selectedUnit }: FlashcardsModuleProps) {
-  const deck = useMemo<Flashcard[]>(
-    () =>
-      selectedUnit === 'all'
-        ? flashcards
-        : flashcards.filter((c) => c.unit === selectedUnit),
+  /* The 42 curated cards — free, always available */
+  const baseDeck = useMemo<Flashcard[]>(
+    () => (selectedUnit === 'all' ? flashcards : flashcards.filter((c) => c.unit === selectedUnit)),
     [selectedUnit]
   );
+
+  /* AI extras, restored from cache so a refresh never re-spends tokens */
+  const [aiCards, setAiCards] = useState<Flashcard[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [aiError, setAiError] = useState<{ message: string; hint: string } | null>(null);
+
+  const deck = useMemo<Flashcard[]>(() => [...baseDeck, ...aiCards], [baseDeck, aiCards]);
 
   const [order, setOrder] = useState<number[]>(() => deck.map((_, i) => i));
   const [position, setPosition] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [mastered, setMastered] = useState<Set<string>>(new Set());
 
-  // Reset when deck changes (unit switch)
+  // Reset when the unit changes (NOT when AI cards are appended — that would
+  // yank the user back to card 1 mid-deck)
   useEffect(() => {
-    setOrder(deck.map((_, i) => i));
+    const cached = readAiCache<Flashcard[]>(cacheName(selectedUnit)) ?? [];
+    setAiCards(cached);
+    setOrder([...baseDeck.map((_, i) => i), ...cached.map((_, i) => baseDeck.length + i)]);
     setPosition(0);
     setIsFlipped(false);
-  }, [deck]);
+    setAiError(null);
+  }, [selectedUnit, baseDeck]);
 
   const currentCard = deck[order[position]];
 
@@ -79,6 +113,54 @@ export default function FlashcardsModule({ selectedUnit }: FlashcardsModuleProps
     setIsFlipped(false);
   };
 
+  /* ------------------------------------------------------------------ */
+  /* AI generation — ONLY runs when the button is clicked, and the result */
+  /* is cached, so opening the page again costs nothing.                 */
+  /* ------------------------------------------------------------------ */
+  const handleGenerate = async () => {
+    if (isGenerating) return;
+    setIsGenerating(true);
+    setAiError(null);
+
+    try {
+      const generated = await generateFlashcards({
+        unit: selectedUnit,
+        unitNames: UNIT_NAMES,
+        count: AI_BATCH_SIZE,
+        avoidFronts: deck.map((c) => c.front),
+      });
+
+      const stamped: Flashcard[] = generated.map((card, i) => ({
+        id: `ai-${selectedUnit}-${Date.now()}-${i}`,
+        front: card.front,
+        back: card.back,
+        unit: card.unit,
+      }));
+
+      const nextAiCards = [...aiCards, ...stamped];
+      setAiCards(nextAiCards);
+      writeAiCache(cacheName(selectedUnit), nextAiCards);
+
+      // keep every existing index valid, and append the new ones
+      setOrder((prev) => [...prev, ...stamped.map((_, i) => baseDeck.length + aiCards.length + i)]);
+    } catch (err) {
+      console.error('Flashcard generation failed:', err);
+      setAiError(describeGeminiError(err));
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleClearAiCards = () => {
+    clearAiCache(cacheName(selectedUnit));
+    setAiCards([]);
+    setOrder(baseDeck.map((_, i) => i));
+    setPosition(0);
+    setIsFlipped(false);
+  };
+
+  const aiCount = deck.length - baseDeck.length;
+
   if (!currentCard || deck.length === 0) {
     return (
       <div className="animate-fade-in rounded-2xl border border-dashed border-slate-300 bg-white/50 py-16 text-center">
@@ -90,6 +172,8 @@ export default function FlashcardsModule({ selectedUnit }: FlashcardsModuleProps
 
   const isMastered = mastered.has(currentCard.id);
   const masteryPct = Math.round((mastered.size / deck.length) * 100);
+  const isAiCard = currentCard.id.startsWith('ai-');
+  const isLastCard = position === deck.length - 1;
 
   return (
     <div className="animate-fade-in">
@@ -103,6 +187,7 @@ export default function FlashcardsModule({ selectedUnit }: FlashcardsModuleProps
             <h2 className="text-sm font-bold text-slate-800">Flashcard Deck</h2>
             <p className="text-xs text-slate-500">
               Card {position + 1} of {deck.length}
+              {aiCount > 0 && <span className="text-violet-500"> · {aiCount} AI</span>}
             </p>
           </div>
         </div>
@@ -141,6 +226,11 @@ export default function FlashcardsModule({ selectedUnit }: FlashcardsModuleProps
               <span className="absolute left-5 top-5 rounded-lg bg-emerald-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wider text-emerald-700">
                 Question
               </span>
+              {isAiCard && (
+                <span className="absolute left-1/2 top-5 -translate-x-1/2 flex items-center gap-1 rounded-lg bg-violet-100 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-violet-700">
+                  <Wand2 className="h-3 w-3" /> AI
+                </span>
+              )}
               {isMastered && (
                 <span className="absolute right-5 top-5 flex items-center gap-1 rounded-lg bg-emerald-500 px-2.5 py-1 text-[11px] font-bold text-white">
                   <Check className="h-3 w-3" /> Mastered
@@ -149,9 +239,7 @@ export default function FlashcardsModule({ selectedUnit }: FlashcardsModuleProps
               <p className="font-serif text-xl font-semibold leading-relaxed text-slate-800 sm:text-2xl">
                 {currentCard.front}
               </p>
-              <p className="absolute bottom-5 text-xs font-medium text-slate-400">
-                Click to flip
-              </p>
+              <p className="absolute bottom-5 text-xs font-medium text-slate-400">Click to flip</p>
             </div>
 
             {/* Back */}
@@ -162,9 +250,7 @@ export default function FlashcardsModule({ selectedUnit }: FlashcardsModuleProps
               <p className="text-base font-medium leading-relaxed text-slate-700 sm:text-lg">
                 {currentCard.back}
               </p>
-              <p className="absolute bottom-5 text-xs font-medium text-slate-400">
-                Click to flip back
-              </p>
+              <p className="absolute bottom-5 text-xs font-medium text-slate-400">Click to flip back</p>
             </div>
           </div>
         </button>
@@ -208,13 +294,70 @@ export default function FlashcardsModule({ selectedUnit }: FlashcardsModuleProps
 
       {/* Reset mastery */}
       {mastered.size > 0 && (
-        <div className="mx-auto mt-4 flex max-w-2xl justify-center">
+        <div className="mx-auto mt-4 flex max-w-2xl justify-center gap-4">
           <button
             onClick={resetMastery}
             className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 transition-colors hover:text-slate-600"
           >
             <RotateCcw className="h-3.5 w-3.5" /> Reset mastery
           </button>
+          {aiCount > 0 && (
+            <button
+              onClick={handleClearAiCards}
+              className="flex items-center gap-1.5 text-xs font-semibold text-slate-400 transition-colors hover:text-slate-600"
+            >
+              <RotateCcw className="h-3.5 w-3.5" /> Remove AI cards
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* ---------------- AI: only offered once the curated deck runs out ---------------- */}
+      {isLastCard && (
+        <div className="mx-auto mt-6 max-w-2xl rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 to-white p-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-100">
+                <Wand2 className="h-4.5 w-4.5 text-violet-700" />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-slate-800">That&apos;s the end of the curated deck</p>
+                <p className="text-xs text-slate-500">
+                  Generate {AI_BATCH_SIZE} more cards for this unit with Gemini.
+                  {aiCount > 0 && ` ${aiCount} AI card${aiCount === 1 ? '' : 's'} already added and saved.`}
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={handleGenerate}
+              disabled={isGenerating}
+              className="flex shrink-0 items-center justify-center gap-1.5 rounded-xl bg-violet-600 px-4 py-2.5 text-sm font-bold text-white shadow-md shadow-violet-500/25 transition-all hover:bg-violet-500 disabled:opacity-60"
+            >
+              {isGenerating ? (
+                <>
+                  <RefreshCw className="h-4 w-4 animate-spin" /> Generating…
+                </>
+              ) : (
+                <>
+                  <Sparkles className="h-4 w-4" /> Generate {AI_BATCH_SIZE} with AI
+                </>
+              )}
+            </button>
+          </div>
+
+          {!hasGeminiApiKey() && (
+            <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-600">
+              <AlertTriangle className="h-3 w-3" /> No API key configured — add VITE_GEMINI_API_KEY first.
+            </p>
+          )}
+
+          {aiError && (
+            <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-[11px] text-red-700">
+              <p className="font-bold">{aiError.message}</p>
+              {aiError.hint && <p className="mt-1 text-red-600/90">{aiError.hint}</p>}
+            </div>
+          )}
         </div>
       )}
 
@@ -224,6 +367,7 @@ export default function FlashcardsModule({ selectedUnit }: FlashcardsModuleProps
           const card = deck[cardIdx];
           const isCurrent = i === position;
           const isMasteredCard = mastered.has(card.id);
+          const isAiDot = card.id.startsWith('ai-');
           return (
             <button
               key={i}
@@ -236,7 +380,9 @@ export default function FlashcardsModule({ selectedUnit }: FlashcardsModuleProps
                   ? 'w-6 gradient-emerald'
                   : isMasteredCard
                     ? 'w-2 bg-emerald-400'
-                    : 'w-2 bg-slate-200 hover:bg-slate-300'
+                    : isAiDot
+                      ? 'w-2 bg-violet-300 hover:bg-violet-400'
+                      : 'w-2 bg-slate-200 hover:bg-slate-300'
               }`}
               aria-label={`Go to card ${i + 1}`}
             />

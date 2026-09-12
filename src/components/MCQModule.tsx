@@ -9,12 +9,37 @@ import {
   Award,
   Target,
   TrendingUp,
+  Sparkles,
+  Wand2,
+  AlertTriangle,
+  RefreshCw,
 } from 'lucide-react';
 import { mcqs, type MCQ, type UnitId } from '@/data/biology';
+import {
+  generateMCQs,
+  describeGeminiError,
+  hasGeminiApiKey,
+  readAiCache,
+  writeAiCache,
+  clearAiCache,
+} from '@/lib/gemini';
 
 interface MCQModuleProps {
   selectedUnit: UnitId | 'all';
 }
+
+/** Questions per AI batch. One request = one batch, so keep it chunky. */
+const AI_BATCH_SIZE = 10;
+const QUIZ_LENGTH = 10;
+
+const UNIT_NAMES: Record<UnitId, string> = {
+  diversity: 'Diversity in the Living World',
+  cell: 'Structural Organisation in Plants and Animals',
+  plant: 'Plant Physiology',
+  human: 'Human Physiology',
+};
+
+const cacheName = (unit: UnitId | 'all') => `mcqs:${unit}`;
 
 function shuffleArray<T>(arr: T[]): T[] {
   const copy = [...arr];
@@ -28,15 +53,20 @@ function shuffleArray<T>(arr: T[]): T[] {
 type AnswerState = 'unanswered' | 'correct' | 'wrong';
 
 export default function MCQModule({ selectedUnit }: MCQModuleProps) {
-  const pool = useMemo<MCQ[]>(
-    () =>
-      selectedUnit === 'all'
-        ? mcqs
-        : mcqs.filter((q) => q.unit === selectedUnit),
+  /* The curated questions — free, always available */
+  const basePool = useMemo<MCQ[]>(
+    () => (selectedUnit === 'all' ? mcqs : mcqs.filter((q) => q.unit === selectedUnit)),
     [selectedUnit]
   );
 
-  const [quiz, setQuiz] = useState<MCQ[]>(() => shuffleArray(pool).slice(0, 10));
+  /* AI extras, restored from cache so a refresh never re-spends tokens */
+  const [aiQuestions, setAiQuestions] = useState<MCQ[]>([]);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [aiError, setAiError] = useState<{ message: string; hint: string } | null>(null);
+
+  const pool = useMemo<MCQ[]>(() => [...basePool, ...aiQuestions], [basePool, aiQuestions]);
+
+  const [quiz, setQuiz] = useState<MCQ[]>(() => shuffleArray(basePool).slice(0, QUIZ_LENGTH));
   const [currentIdx, setCurrentIdx] = useState(0);
   const [selected, setSelected] = useState<number | null>(null);
   const [answers, setAnswers] = useState<AnswerState[]>([]);
@@ -44,12 +74,15 @@ export default function MCQModule({ selectedUnit }: MCQModuleProps) {
 
   // Reset when unit changes
   useEffect(() => {
-    setQuiz(shuffleArray(pool).slice(0, 10));
+    const cached = readAiCache<MCQ[]>(cacheName(selectedUnit)) ?? [];
+    setAiQuestions(cached);
+    setQuiz(shuffleArray(basePool).slice(0, QUIZ_LENGTH));
     setCurrentIdx(0);
     setSelected(null);
     setAnswers([]);
     setFinished(false);
-  }, [pool]);
+    setAiError(null);
+  }, [selectedUnit, basePool]);
 
   const current = quiz[currentIdx];
   const score = answers.filter((a) => a === 'correct').length;
@@ -75,12 +108,62 @@ export default function MCQModule({ selectedUnit }: MCQModuleProps) {
   };
 
   const handleRetry = () => {
-    setQuiz(shuffleArray(pool).slice(0, 10));
+    setQuiz(shuffleArray(pool).slice(0, QUIZ_LENGTH));
     setCurrentIdx(0);
     setSelected(null);
     setAnswers([]);
     setFinished(false);
   };
+
+  /* ------------------------------------------------------------------ */
+  /* AI generation — button-triggered only, and cached afterwards.       */
+  /* ------------------------------------------------------------------ */
+  const handleGenerateMore = async () => {
+    if (isGenerating) return;
+    setIsGenerating(true);
+    setAiError(null);
+
+    try {
+      const generated = await generateMCQs({
+        unit: selectedUnit,
+        unitNames: UNIT_NAMES,
+        count: AI_BATCH_SIZE,
+        avoidQuestions: pool.map((q) => q.question),
+      });
+
+      const stamped: MCQ[] = generated.map((q, i) => ({
+        id: `ai-${selectedUnit}-${Date.now()}-${i}`,
+        question: q.question,
+        options: q.options,
+        correctIndex: q.correctIndex,
+        explanation: q.explanation,
+        unit: q.unit as UnitId,
+      }));
+
+      const nextAi = [...aiQuestions, ...stamped];
+      setAiQuestions(nextAi);
+      writeAiCache(cacheName(selectedUnit), nextAi);
+
+      // straight into a fresh quiz made of the new questions
+      setQuiz(stamped.slice(0, QUIZ_LENGTH));
+      setCurrentIdx(0);
+      setSelected(null);
+      setAnswers([]);
+      setFinished(false);
+    } catch (err) {
+      console.error('MCQ generation failed:', err);
+      setAiError(describeGeminiError(err));
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleClearAiQuestions = () => {
+    clearAiCache(cacheName(selectedUnit));
+    setAiQuestions([]);
+  };
+
+  const aiCount = pool.length - basePool.length;
 
   if (quiz.length === 0) {
     return (
@@ -92,11 +175,25 @@ export default function MCQModule({ selectedUnit }: MCQModuleProps) {
   }
 
   if (finished) {
-    return <ScoreSummary score={score} total={quiz.length} onRetry={handleRetry} answers={answers} quiz={quiz} />;
+    return (
+      <ScoreSummary
+        score={score}
+        total={quiz.length}
+        onRetry={handleRetry}
+        answers={answers}
+        quiz={quiz}
+        aiCount={aiCount}
+        isGenerating={isGenerating}
+        aiError={aiError}
+        onGenerateMore={handleGenerateMore}
+        onClearAiQuestions={handleClearAiQuestions}
+      />
+    );
   }
 
   const answered = selected !== null;
   const isCorrect = answers[currentIdx] === 'correct';
+  const isAiQuestion = current.id.startsWith('ai-');
 
   return (
     <div className="animate-fade-in mx-auto max-w-2xl">
@@ -110,6 +207,7 @@ export default function MCQModule({ selectedUnit }: MCQModuleProps) {
             <h2 className="text-sm font-bold text-slate-800">MCQ Practice</h2>
             <p className="text-xs text-slate-500">
               Question {currentIdx + 1} of {quiz.length}
+              {aiCount > 0 && <span className="text-violet-500"> · {aiCount} AI in pool</span>}
             </p>
           </div>
         </div>
@@ -128,13 +226,17 @@ export default function MCQModule({ selectedUnit }: MCQModuleProps) {
       </div>
 
       {/* Question card */}
-      <div
-        key={current.id}
-        className="animate-fade-up rounded-2xl border border-slate-200 bg-white p-6 shadow-sm"
-      >
-        <span className="rounded-md bg-emerald-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-emerald-700">
-          NEET Pattern
-        </span>
+      <div key={current.id} className="animate-fade-up rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex items-center gap-2">
+          <span className="rounded-md bg-emerald-50 px-2.5 py-1 text-[11px] font-bold uppercase tracking-wide text-emerald-700">
+            NEET Pattern
+          </span>
+          {isAiQuestion && (
+            <span className="flex items-center gap-1 rounded-md bg-violet-100 px-2 py-1 text-[11px] font-bold uppercase tracking-wide text-violet-700">
+              <Wand2 className="h-3 w-3" /> AI
+            </span>
+          )}
+        </div>
         <h3 className="mt-3 text-base font-bold leading-relaxed text-slate-800 sm:text-lg">
           {current.question}
         </h3>
@@ -235,19 +337,33 @@ interface ScoreSummaryProps {
   onRetry: () => void;
   answers: AnswerState[];
   quiz: MCQ[];
+  aiCount: number;
+  isGenerating: boolean;
+  aiError: { message: string; hint: string } | null;
+  onGenerateMore: () => void;
+  onClearAiQuestions: () => void;
 }
 
-function ScoreSummary({ score, total, onRetry }: ScoreSummaryProps) {
+function ScoreSummary({
+  score,
+  total,
+  onRetry,
+  aiCount,
+  isGenerating,
+  aiError,
+  onGenerateMore,
+  onClearAiQuestions,
+}: ScoreSummaryProps) {
   const pct = Math.round((score / total) * 100);
   const isExcellent = pct >= 80;
   const isGood = pct >= 50 && pct < 80;
 
   const grade = isExcellent ? 'Excellent' : isGood ? 'Good Effort' : 'Keep Practicing';
   const message = isExcellent
-    ? 'Outstanding! You\'re NEET-ready on this set.'
+    ? "Outstanding! You're NEET-ready on this set."
     : isGood
       ? 'Solid attempt. Review the explanations and try again.'
-      : 'Don\'t worry — revise the notes and retry to improve.';
+      : "Don't worry — revise the notes and retry to improve.";
 
   const TrophyIcon = isExcellent ? Trophy : isGood ? Award : TrendingUp;
 
@@ -297,6 +413,62 @@ function ScoreSummary({ score, total, onRetry }: ScoreSummaryProps) {
           >
             <RotateCcw className="h-4 w-4" /> Retry Quiz
           </button>
+
+          {/* ---------------- AI: fresh questions after the curated set ---------------- */}
+          <div className="mt-5 rounded-2xl border border-violet-200 bg-gradient-to-br from-violet-50 to-white p-4 text-left">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-violet-100">
+                <Wand2 className="h-4 w-4 text-violet-700" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-slate-800">Finished the curated set?</p>
+                <p className="text-xs text-slate-500">
+                  Generate {AI_BATCH_SIZE} fresh NEET-style questions with Gemini.
+                  {aiCount > 0 && ` ${aiCount} AI question${aiCount === 1 ? '' : 's'} already saved.`}
+                </p>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    onClick={onGenerateMore}
+                    disabled={isGenerating}
+                    className="flex items-center gap-1.5 rounded-xl bg-violet-600 px-3.5 py-2 text-xs font-bold text-white shadow-md shadow-violet-500/25 transition-all hover:bg-violet-500 disabled:opacity-60"
+                  >
+                    {isGenerating ? (
+                      <>
+                        <RefreshCw className="h-3.5 w-3.5 animate-spin" /> Generating…
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="h-3.5 w-3.5" /> Generate {AI_BATCH_SIZE} with AI
+                      </>
+                    )}
+                  </button>
+
+                  {aiCount > 0 && (
+                    <button
+                      onClick={onClearAiQuestions}
+                      className="flex items-center gap-1 text-[11px] font-semibold text-slate-400 hover:text-slate-600"
+                    >
+                      <RotateCcw className="h-3 w-3" /> Clear AI questions
+                    </button>
+                  )}
+                </div>
+
+                {!hasGeminiApiKey() && (
+                  <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-600">
+                    <AlertTriangle className="h-3 w-3" /> No API key configured — add VITE_GEMINI_API_KEY first.
+                  </p>
+                )}
+
+                {aiError && (
+                  <div className="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-[11px] text-red-700">
+                    <p className="font-bold">{aiError.message}</p>
+                    {aiError.hint && <p className="mt-1 text-red-600/90">{aiError.hint}</p>}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
