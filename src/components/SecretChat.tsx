@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Send, Hash, Lock, LogOut, Power, Plus, UserPlus, LogIn,
   ShieldAlert, Users, MessageSquare, CheckCheck, Trash2,
@@ -85,6 +86,10 @@ const SWIPE_MAX = 88;       // px the bubble can travel
 const SWIPE_LOCK_PX = 8;    // movement before the gesture axis is decided
 const SWIPE_SLOP = 0.6;     // rubber-band factor
 const DOUBLE_TAP_MS = 300;  // window for the double-tap heart
+const LONG_PRESS_MS = 500;  // hold this long to reveal the actions (Instagram style)
+const IS_TOUCH_DEVICE =
+  typeof window !== 'undefined' &&
+  ('ontouchstart' in window || (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0));
 const GROUP_EMOJIS = ['👥', '🔥', '🎮', '📚', '🧠', '🎵', '⚽', '🍕', '💀', '🌈', '🧪', '🐧'];
 
 const isGroupKey = (channelKey: string) => channelKey.startsWith(GROUP_PREFIX);
@@ -151,6 +156,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     icon: HTMLElement | null;
   } | null>(null);
   const lastTapRef = useRef<{ id: string; at: number }>({ id: '', at: 0 });
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressFiredRef = useRef(false);
 
   const [showNewDMModal, setShowNewDMModal] = useState(false);
   const [selectedDMUser, setSelectedDMUser] = useState('');
@@ -180,6 +187,11 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const [activeMessageMenuId, setActiveMessageMenuId] = useState<string | null>(null);
   // Emoji reaction picker state
   const [activeReactionPickerId, setActiveReactionPickerId] = useState<string | null>(null);
+  // Actions revealed by tapping / long-pressing a message (phones). On desktop
+  // the buttons simply appear on hover.
+  const [actionsVisibleId, setActionsVisibleId] = useState<string | null>(null);
+  // Fixed viewport coordinates for the portalled message popup
+  const [popupPos, setPopupPos] = useState<{ top: number; left: number; openUp: boolean } | null>(null);
 
   // Pagination state
   const [visibleCounts, setVisibleCounts] = useState<Record<string, number>>({});
@@ -187,8 +199,12 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
 
-  // Popover refs so "click anywhere" can dismiss them
-  const messageMenuRef = useRef<HTMLDivElement | null>(null);
+  // Popovers are dismissed by clicking anywhere. The message menu and the
+  // reaction picker render through a portal onto document.body, so they sit
+  // above every message instead of being buried by later ones; clicking
+  // inside '[data-msg-actions]' or inside the portal must not dismiss them.
+  const portalRef = useRef<HTMLDivElement | null>(null);
+  const popupAnchorRef = useRef<{ el: HTMLElement; kind: 'menu' | 'picker' } | null>(null);
   const channelMenuRef = useRef<HTMLDivElement | null>(null);
 
   // Typing indicators state
@@ -326,13 +342,22 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   /* CLICK ANYWHERE -> DISMISS OPEN POPUPS (dropdowns)                   */
   /* ------------------------------------------------------------------ */
   useEffect(() => {
-    if (!activeMessageMenuId && !activeReactionPickerId) return;
+    if (!activeMessageMenuId && !activeReactionPickerId && !actionsVisibleId) return;
 
     const handleOutsideClick = (event: MouseEvent | TouchEvent) => {
-      const target = event.target as Node | null;
-      if (messageMenuRef.current && target && messageMenuRef.current.contains(target)) return;
+      const target = event.target as HTMLElement | null;
+      if (!target || typeof target.closest !== 'function') return;
+      // the action buttons and the popup itself are "inside"
+      if (target.closest('[data-msg-actions]')) return;
+      if (target.closest('[data-msg-popup]')) return;
+      if (portalRef.current && portalRef.current.contains(target)) return;
+      // On touch, a tap on a message is handled by that row (it reveals or
+      // hides its own buttons), so don't clear anything out from under it.
+      if (event.type === 'touchstart' && target.closest('[data-msg-row]')) return;
+
       setActiveMessageMenuId(null);
       setActiveReactionPickerId(null);
+      setActionsVisibleId(null);
     };
 
     document.addEventListener('mousedown', handleOutsideClick);
@@ -341,7 +366,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       document.removeEventListener('mousedown', handleOutsideClick);
       document.removeEventListener('touchstart', handleOutsideClick);
     };
-  }, [activeMessageMenuId, activeReactionPickerId]);
+  }, [activeMessageMenuId, activeReactionPickerId, actionsVisibleId]);
 
   useEffect(() => {
     if (!showChannelMenu) return;
@@ -360,6 +385,87 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     };
   }, [showChannelMenu]);
 
+  /* ------------------------------------------------------------------ */
+  /* MESSAGE POPUP (reaction picker + 3-dot menu)                       */
+  /* Portalled to document.body with fixed coordinates, so it is always */
+  /* in front of the chat and never clipped or covered by later bubbles. */
+  /* ------------------------------------------------------------------ */
+  const updatePopupPos = () => {
+    const anchor = popupAnchorRef.current;
+    if (!anchor) return;
+    const el = anchor.el;
+    if (!el.isConnected) {
+      setActiveMessageMenuId(null);
+      setActiveReactionPickerId(null);
+      return;
+    }
+    const rect = el.getBoundingClientRect();
+    const width = anchor.kind === 'picker' ? 232 : 176;
+    const height = anchor.kind === 'picker' ? 52 : 250;
+    const openUp = window.innerHeight - rect.bottom < height + 16;
+
+    let left = rect.left;
+    if (left + width > window.innerWidth - 8) left = rect.right - width;
+    left = Math.max(8, Math.min(left, window.innerWidth - width - 8));
+
+    setPopupPos({ top: openUp ? rect.top - 8 : rect.bottom + 8, left, openUp });
+  };
+
+  // Position it before paint so there is never a visible jump
+  useLayoutEffect(() => {
+    const id = activeReactionPickerId || activeMessageMenuId;
+    if (!id) {
+      setPopupPos(null);
+      return;
+    }
+    const kind: 'menu' | 'picker' = activeReactionPickerId ? 'picker' : 'menu';
+    const selector =
+      (kind === 'picker' ? '[data-action-react="' : '[data-action-menu="') + id + '"]';
+    const el = document.querySelector(selector) as HTMLElement | null;
+    if (!el) return;
+    popupAnchorRef.current = { el, kind };
+    updatePopupPos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMessageMenuId, activeReactionPickerId]);
+
+  // Stay glued to the button while the list scrolls or the window resizes
+  useEffect(() => {
+    if (!activeMessageMenuId && !activeReactionPickerId) return;
+    const reposition = () => updatePopupPos();
+    window.addEventListener('scroll', reposition, true);
+    window.addEventListener('resize', reposition);
+    return () => {
+      window.removeEventListener('scroll', reposition, true);
+      window.removeEventListener('resize', reposition);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeMessageMenuId, activeReactionPickerId]);
+
+  const closeMessagePopup = () => {
+    setActiveMessageMenuId(null);
+    setActiveReactionPickerId(null);
+  };
+
+  const openMessageMenu = (msg: ChatMessage) => {
+    if (activeMessageMenuId === msg.id) {
+      closeMessagePopup();
+      return;
+    }
+    setActiveReactionPickerId(null);
+    setActiveMessageMenuId(msg.id);
+    setActionsVisibleId(msg.id);
+  };
+
+  const openReactionPicker = (msg: ChatMessage) => {
+    if (activeReactionPickerId === msg.id) {
+      closeMessagePopup();
+      return;
+    }
+    setActiveMessageMenuId(null);
+    setActiveReactionPickerId(msg.id);
+    setActionsVisibleId(msg.id);
+  };
+
   // ESC also closes whatever popup is open
   useEffect(() => {
     const handleEscape = (e: KeyboardEvent) => {
@@ -368,6 +474,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         setActiveMessageMenuId(null);
       } else if (activeReactionPickerId) {
         setActiveReactionPickerId(null);
+      } else if (actionsVisibleId) {
+        setActionsVisibleId(null);
       } else if (showChannelMenu) {
         setShowChannelMenu(false);
       } else if (editingMessage) {
@@ -382,7 +490,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     window.addEventListener('keydown', handleEscape);
     return () => window.removeEventListener('keydown', handleEscape);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeMessageMenuId, activeReactionPickerId, showChannelMenu, editingMessage, replyingTo, expandedImageUrl]);
+  }, [activeMessageMenuId, activeReactionPickerId, actionsVisibleId, showChannelMenu, editingMessage, replyingTo, expandedImageUrl]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     setInputMessage(e.target.value);
@@ -814,6 +922,16 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   };
 
   const handleTouchStart = (e: React.TouchEvent, msg: ChatMessage) => {
+    // Touches on the action buttons / the popup belong to those buttons
+    const targetEl = e.target as HTMLElement | null;
+    if (
+      targetEl &&
+      typeof targetEl.closest === 'function' &&
+      (targetEl.closest('[data-msg-actions]') || targetEl.closest('[data-msg-popup]'))
+    ) {
+      return;
+    }
+
     const row = e.currentTarget as HTMLElement;
     const touch = e.touches[0];
     if (!touch) return;
@@ -830,16 +948,40 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       content: row.querySelector<HTMLElement>('[data-swipe-content]'),
       icon: row.querySelector<HTMLElement>('[data-swipe-icon]'),
     };
+
+    // holding a message reveals its buttons, like Instagram
+    longPressFiredRef.current = false;
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = setTimeout(() => {
+      const current = swipeRef.current;
+      if (current && !current.horizontal) {
+        longPressFiredRef.current = true;
+        setActionsVisibleId(msg.id);
+        buzz(15);
+      }
+    }, LONG_PRESS_MS);
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
     const s = swipeRef.current;
     if (!s || !s.content || !s.icon) return;
+    // a long press already claimed this gesture — don't also drag the bubble
+    if (longPressFiredRef.current) return;
+
     const touch = e.touches[0];
     if (!touch) return;
 
     s.rawDx = touch.clientX - s.startX;
     const dy = touch.clientY - s.startY;
+
+    // any real movement means "not a long press"
+    if (
+      longPressTimerRef.current &&
+      (Math.abs(s.rawDx) > SWIPE_LOCK_PX || Math.abs(dy) > SWIPE_LOCK_PX)
+    ) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
 
     if (!s.locked) {
       if (Math.abs(s.rawDx) < SWIPE_LOCK_PX && Math.abs(dy) < SWIPE_LOCK_PX) return;
@@ -915,20 +1057,60 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     // a tap (no meaningful drag) — two of them quickly = quick ❤️ reaction
     if (!s.horizontal || Math.abs(s.rawDx) < SWIPE_LOCK_PX) {
       const now = Date.now();
-      if (lastTapRef.current.id === msg.id && now - lastTapRef.current.at < DOUBLE_TAP_MS) {
+      const isDoubleTap =
+        lastTapRef.current.id === msg.id && now - lastTapRef.current.at < DOUBLE_TAP_MS;
+
+      if (isDoubleTap) {
         lastTapRef.current = { id: '', at: 0 };
+        setActionsVisibleId(msg.id);
         toggleReaction(msg, DOUBLE_TAP_REACTION);
       } else {
         lastTapRef.current = { id: msg.id, at: now };
+        // moving to another message takes its popup down with it
+        if (activeMessageMenuId && activeMessageMenuId !== msg.id) setActiveMessageMenuId(null);
+        if (activeReactionPickerId && activeReactionPickerId !== msg.id) {
+          setActiveReactionPickerId(null);
+        }
+        // Tapping a message (or the space beside it) reveals its buttons on a
+        // phone; tapping the same one again puts them away.
+        setActionsVisibleId((prev) => (prev === msg.id ? null : msg.id));
       }
     }
   };
 
-  const handleTouchEnd = (_e: React.TouchEvent, msg: ChatMessage) => {
+  const handleTouchEnd = (e: React.TouchEvent, msg: ChatMessage) => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    const wasLongPress = longPressFiredRef.current;
+    longPressFiredRef.current = false;
+
+    const targetEl = e.target as HTMLElement | null;
+    if (
+      targetEl &&
+      typeof targetEl.closest === 'function' &&
+      (targetEl.closest('[data-msg-actions]') || targetEl.closest('[data-msg-popup]'))
+    ) {
+      swipeRef.current = null;
+      return;
+    }
+
+    // the long press did its job already — don't also arm a reply
+    if (wasLongPress) {
+      swipeRef.current = null;
+      return;
+    }
+
     finishSwipe(msg);
   };
 
   const handleTouchCancel = () => {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+    longPressFiredRef.current = false;
     const s = swipeRef.current;
     swipeRef.current = null;
     if (s && s.content && s.icon) paintSwipeRest(s.content, s.icon, true);
@@ -1320,38 +1502,80 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   /* ------------------------------------------------------------------ */
   /* MESSAGE 3-DOT DROPDOWN                                             */
   /* ------------------------------------------------------------------ */
-  const renderMessageControls = (msg: ChatMessage, isSelf: boolean) => {
-    const editable = canEditMessage(msg);
-    const minsLeft = editMinutesLeft(msg);
-    const pickerOpen = activeReactionPickerId === msg.id;
+  /* ------------------------------------------------------------------ */
+  /* MESSAGE ACTION BUTTONS                                              */
+  /* They sit in the empty gutter beside the bubble — left of your own    */
+  /* messages, right of everyone else's — so they never cover the text.   */
+  /* Hidden until you hover (desktop) or tap / long-press (phone).        */
+  /* ------------------------------------------------------------------ */
+  const renderMessageActions = (msg: ChatMessage) => {
+    const visible =
+      actionsVisibleId === msg.id ||
+      activeMessageMenuId === msg.id ||
+      activeReactionPickerId === msg.id;
+
+    return (
+      <div
+        data-msg-actions
+        className={`flex shrink-0 items-center gap-0.5 transition-opacity duration-150 ${
+          visible
+            ? 'opacity-100'
+            : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100'
+        }`}
+      >
+        <button
+          data-action-react={msg.id}
+          onClick={() => openReactionPicker(msg)}
+          title="React to this message"
+          className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
+        >
+          <SmilePlus className="h-4 w-4" />
+        </button>
+        <button
+          data-action-menu={msg.id}
+          onClick={() => openMessageMenu(msg)}
+          title="More options"
+          className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
+        >
+          <MoreVertical className="h-4 w-4" />
+        </button>
+      </div>
+    );
+  };
+
+  /* ------------------------------------------------------------------ */
+  /* THE POPUP ITSELF — portalled to <body>, fixed positioned, z-9999    */
+  /* ------------------------------------------------------------------ */
+  const renderMessagePopup = () => {
+    const openId = activeReactionPickerId || activeMessageMenuId;
+    if (!openId || !popupPos || typeof document === 'undefined') return null;
+
+    const msg = rawMessages.find((m) => m.id === openId);
+    if (!msg) return null;
+
+    const isSelf = msg.sender === currentUser;
     const me = currentUser || '';
     const myReactions = Object.keys(msg.reactions || {}).filter(
       (emoji) => msg.reactions?.[emoji]?.[me]
     );
+    const editable = canEditMessage(msg);
+    const minsLeft = editMinutesLeft(msg);
 
-    return (
-      <div ref={messageMenuRef} className="relative flex items-center gap-0.5">
-        {/* QUICK REACTION BUTTON */}
-        <button
-          onClick={() => {
-            setActiveReactionPickerId(pickerOpen ? null : msg.id);
-            setActiveMessageMenuId(null);
-          }}
-          title="React to this message"
-          className={`p-1 rounded transition-colors hover:bg-slate-700 hover:text-white ${
-            pickerOpen ? 'bg-slate-700 text-white' : 'text-slate-400'
-          }`}
-        >
-          <SmilePlus className="h-3.5 w-3.5" />
-        </button>
-
-        {/* REACTION PICKER */}
-        {pickerOpen && (
-          <div
-            className={`absolute z-40 top-7 flex items-center gap-0.5 rounded-full border border-slate-700 bg-[#1f2c34] px-1.5 py-1 shadow-2xl ${
-              isSelf ? 'right-0' : 'left-0'
-            }`}
-          >
+    return createPortal(
+      <div
+        ref={portalRef}
+        data-msg-popup
+        style={{
+          position: 'fixed',
+          top: popupPos.top,
+          left: popupPos.left,
+          transform: popupPos.openUp ? 'translateY(-100%)' : 'none',
+          zIndex: 9999,
+        }}
+      >
+        {activeReactionPickerId ? (
+          /* QUICK REACTION PICKER */
+          <div className="flex items-center gap-0.5 rounded-full border border-slate-700 bg-[#1f2c34] px-1.5 py-1 shadow-2xl">
             {QUICK_REACTIONS.map((emoji) => {
               const mine = myReactions.includes(emoji);
               return (
@@ -1368,25 +1592,9 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               );
             })}
           </div>
-        )}
-
-        {/* 3-DOT MENU */}
-        <button
-          onClick={() => {
-            setActiveMessageMenuId(activeMessageMenuId === msg.id ? null : msg.id);
-            setActiveReactionPickerId(null);
-          }}
-          className="p-1 rounded text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
-        >
-          <MoreVertical className="h-3.5 w-3.5" />
-        </button>
-
-        {activeMessageMenuId === msg.id && (
-          <div
-            className={`absolute z-30 w-44 rounded-xl border border-slate-800 bg-[#1f2c34] p-1 shadow-2xl top-7 ${
-              isSelf ? 'right-0' : 'left-0'
-            }`}
-          >
+        ) : (
+          /* 3-DOT MENU */
+          <div className="w-44 rounded-xl border border-slate-800 bg-[#1f2c34] p-1 shadow-2xl">
             {/* QUICK REACTIONS INSIDE THE MENU */}
             <div className="mb-1 flex items-center justify-between gap-0.5 border-b border-slate-700/60 px-0.5 pb-1.5">
               {QUICK_REACTIONS.map((emoji) => (
@@ -1410,11 +1618,11 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                 setReplyingTo({
                   id: msg.id,
                   sender: msg.sender,
-                  text: msg.text || (msg.imageUrl ? '📷 Photo' : ''),
+                  text: msg.text || (msg.imageUrl ? '\ud83d\udcf7 Photo' : ''),
                   imageUrl: msg.imageUrl,
                 });
                 setEditingMessage(null);
-                setActiveMessageMenuId(null);
+                closeMessagePopup();
               }}
               className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700/70"
             >
@@ -1425,7 +1633,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               <button
                 onClick={() => {
                   navigator.clipboard?.writeText(msg.text).catch(() => {});
-                  setActiveMessageMenuId(null);
+                  closeMessagePopup();
                 }}
                 className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700/70"
               >
@@ -1447,7 +1655,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
             <button
               onClick={() => {
                 setPinnedMessageId(msg.id);
-                setActiveMessageMenuId(null);
+                closeMessagePopup();
               }}
               className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700/70"
             >
@@ -1464,7 +1672,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
             )}
           </div>
         )}
-      </div>
+      </div>,
+      document.body
     );
   };
 
@@ -2064,6 +2273,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                   )}
                   <div
                     id={`msg-${msg.id}`}
+                    data-msg-row
                     onTouchStart={(e) => handleTouchStart(e, msg)}
                     onTouchMove={handleTouchMove}
                     onTouchEnd={(e) => handleTouchEnd(e, msg)}
@@ -2082,43 +2292,36 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
                     <div
                       data-swipe-content
-                      className={`relative z-10 flex flex-col ${isSelf ? 'items-end' : 'items-start'}`}
+                      className={`relative z-10 flex w-full flex-col ${isSelf ? 'items-end' : 'items-start'}`}
                     >
+                    {/* Actions live in the gutter: left of your own bubble, right of everyone else's */}
+                    <div
+                      className={`flex w-full items-center gap-1 ${
+                        isSelf ? 'justify-end' : 'justify-start'
+                      }`}
+                    >
+                    {isSelf && renderMessageActions(msg)}
+
                     <div
                       onDoubleClick={() => toggleReaction(msg, DOUBLE_TAP_REACTION)}
                       title="Double tap to react ❤️"
-                      className={`max-w-[85%] sm:max-w-[65%] rounded-2xl px-3.5 py-2 shadow-sm text-sm relative ${
+                      className={`max-w-[78%] sm:max-w-[62%] rounded-2xl px-3.5 py-2 shadow-sm text-sm relative ${
                         isSelf
                           ? 'bg-[#005c4b] text-[#e9edef] rounded-tr-none'
                           : 'bg-[#202c33] text-[#e9edef] rounded-tl-none'
                       } ${isBeingEdited ? 'ring-2 ring-amber-400/70' : ''}`}
                     >
                       {/* SENDER HEADER - Rendered only on the first message of a consecutive series */}
-                      {!isSequence ? (
-                        <div className="flex items-center justify-between border-b border-slate-700/40 pb-1 mb-1.5 gap-4">
-                          <div className="flex items-center gap-2">
-                            {renderAvatar(msg.sender, 'h-5 w-5')}
-                            <span
-                              onClick={() => setInspectingUser(msg.sender)}
-                              className="text-xs font-bold text-emerald-400 hover:underline cursor-pointer"
-                            >
-                              {msg.sender}
-                            </span>
-                            {renderDiscordBadge(msg.sender)}
-                          </div>
-
-                          {renderMessageControls(msg, isSelf)}
-                        </div>
-                      ) : (
-                        /* Minimal dropdown for grouped messages */
-                        <div
-                          className={`absolute right-2 top-2 transition-opacity ${
-                            activeMessageMenuId === msg.id
-                              ? 'opacity-100'
-                              : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100'
-                          }`}
-                        >
-                          {renderMessageControls(msg, isSelf)}
+                      {!isSequence && (
+                        <div className="flex items-center gap-2 border-b border-slate-700/40 pb-1 mb-1.5">
+                          {renderAvatar(msg.sender, 'h-5 w-5')}
+                          <span
+                            onClick={() => setInspectingUser(msg.sender)}
+                            className="text-xs font-bold text-emerald-400 hover:underline cursor-pointer"
+                          >
+                            {msg.sender}
+                          </span>
+                          {renderDiscordBadge(msg.sender)}
                         </div>
                       )}
 
@@ -2175,6 +2378,9 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                           <CheckCheck className={`h-3.5 w-3.5 ${isRead ? 'text-sky-400' : 'text-slate-400'}`} />
                         )}
                       </div>
+                    </div>
+
+                    {!isSelf && renderMessageActions(msg)}
                     </div>
 
                     {/* Single "Seen" display on the last seen message only */}
@@ -2533,6 +2739,9 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           )}
         </aside>
       )}
+
+      {/* MESSAGE POPUP (portal — always in front of the chat) */}
+      {renderMessagePopup()}
 
       {/* FULL IMAGE EXPAND LIGHTBOX MODAL */}
       {expandedImageUrl && (
