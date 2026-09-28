@@ -26,6 +26,11 @@ interface ReplyContext {
   imageUrl?: string;
 }
 
+interface PendingImageAttachment {
+  file: File;
+  previewUrl: string;
+}
+
 interface ChatMessage {
   id: string;
   sender: string;
@@ -155,10 +160,10 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const [groupEmojiDraft, setGroupEmojiDraft] = useState('👥');
   const [memberToAdd, setMemberToAdd] = useState('');
 
-  // Image Upload State
-  const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  // Image Upload State. Device picks can contain several files; each is
+  // intentionally sent as its own chat message after uploading.
+  const [selectedImages, setSelectedImages] = useState<PendingImageAttachment[]>([]);
   const [selectedGifUrl, setSelectedGifUrl] = useState('');
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
   const [showImageSourcePicker, setShowImageSourcePicker] = useState(false);
@@ -611,25 +616,50 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     }
   };
 
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    setShowImageSourcePicker(false);
-    if (file) {
-      if (!file.type.startsWith('image/')) {
-        alert('Please select a valid image file.');
-        e.target.value = '';
-        return;
-      }
-      setSelectedImage(file);
-      setSelectedGifUrl('');
-      setImagePreview(URL.createObjectURL(file));
+  const revokeAttachmentPreviews = (attachments: PendingImageAttachment[]) => {
+    attachments.forEach((attachment) => URL.revokeObjectURL(attachment.previewUrl));
+  };
+
+  const addImageFiles = (files: File[]) => {
+    const imageFiles = files.filter((file) => file.type.startsWith('image/'));
+    if (!imageFiles.length) {
+      if (files.length) alert('Please select valid image files.');
+      return;
     }
+
+    if (imageFiles.length !== files.length) {
+      alert('Non-image files were skipped.');
+    }
+
+    setSelectedImages((previous) => [
+      ...previous,
+      ...imageFiles.map((file) => ({ file, previewUrl: URL.createObjectURL(file) })),
+    ]);
+    setSelectedGifUrl('');
+  };
+
+  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    setShowImageSourcePicker(false);
+    addImageFiles(files);
+    // Clearing allows the same photo to be selected again after it is removed.
+    e.target.value = '';
+  };
+
+  const removeSelectedImage = (index: number) => {
+    setSelectedImages((previous) => {
+      const attachment = previous[index];
+      if (attachment) URL.revokeObjectURL(attachment.previewUrl);
+      return previous.filter((_, attachmentIndex) => attachmentIndex !== index);
+    });
   };
 
   const cancelImageSelection = () => {
-    setSelectedImage(null);
+    setSelectedImages((previous) => {
+      revokeAttachmentPreviews(previous);
+      return [];
+    });
     setSelectedGifUrl('');
-    setImagePreview(null);
     setShowImageSourcePicker(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (cameraInputRef.current) cameraInputRef.current.value = '';
@@ -637,9 +667,11 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
   const handleGifSelect = (gifUrl: string) => {
     if (editingMessage) return;
-    setSelectedImage(null);
+    setSelectedImages((previous) => {
+      revokeAttachmentPreviews(previous);
+      return [];
+    });
     setSelectedGifUrl(gifUrl);
-    setImagePreview(gifUrl);
     if (fileInputRef.current) fileInputRef.current.value = '';
     if (cameraInputRef.current) cameraInputRef.current.value = '';
     setShowImageSourcePicker(false);
@@ -649,21 +681,14 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const handlePasteImage = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     if (editingMessage) return;
 
-    const items = e.clipboardData?.items;
-    if (!items) return;
+    const files = Array.from(e.clipboardData?.items || [])
+      .filter((item) => item.type.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => Boolean(file));
 
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item.type.startsWith('image/')) {
-        const file = item.getAsFile();
-        if (file) {
-          e.preventDefault();
-          setSelectedImage(file);
-          setSelectedGifUrl('');
-          setImagePreview(URL.createObjectURL(file));
-        }
-        break;
-      }
+    if (files.length) {
+      e.preventDefault();
+      addImageFiles(files);
     }
   };
 
@@ -862,48 +887,66 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     }
 
     /* ---------- SENDING A NEW MESSAGE ---------- */
-    if (!inputMessage.trim() && !selectedImage && !selectedGifUrl) return;
+    if (!inputMessage.trim() && selectedImages.length === 0 && !selectedGifUrl) return;
 
-    let uploadedUrl = selectedGifUrl;
-    if (selectedImage) {
-      setIsUploadingImage(true);
-      try {
-        uploadedUrl = await uploadImageToImgBB(selectedImage);
-      } catch (err) {
-        console.error('Image upload error:', err);
-        alert('Failed to upload image. Please verify your ImgBB connection.');
-        setIsUploadingImage(false);
-        return;
-      }
-      setIsUploadingImage(false);
-    }
-
-    let sanitizedReplyTo: ReplyContext | null = null;
-    if (replyingTo) {
-      sanitizedReplyTo = {
-        id: replyingTo.id || '',
-        sender: replyingTo.sender || '',
-        text: replyingTo.text || '',
-        ...(replyingTo.imageUrl ? { imageUrl: replyingTo.imageUrl } : {}),
-      };
-    }
-
-    const messagesRef = ref(database, 'messages');
-    const newMessage: Record<string, any> = {
-      sender: currentUser,
-      receiver: activeChannel,
-      text: inputMessage.trim(),
-      ...(uploadedUrl ? { imageUrl: uploadedUrl } : {}),
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-      timestamp: Date.now(),
-      readBy: {
-        [currentUser]: true,
-      },
-      ...(sanitizedReplyTo ? { replyTo: sanitizedReplyTo } : {}),
-    };
+    const uploadedUrls: string[] = selectedGifUrl ? [selectedGifUrl] : [];
+    const hasDeviceImages = selectedImages.length > 0;
+    if (hasDeviceImages) setIsUploadingImage(true);
 
     try {
-      await push(messagesRef, newMessage);
+      // Upload in selection order. A later atomic Firebase update creates one
+      // separate message record per URL, so album-style picks never become a
+      // single crowded message bubble.
+      for (const attachment of selectedImages) {
+        uploadedUrls.push(await uploadImageToImgBB(attachment.file));
+      }
+
+      let sanitizedReplyTo: ReplyContext | null = null;
+      if (replyingTo) {
+        sanitizedReplyTo = {
+          id: replyingTo.id || '',
+          sender: replyingTo.sender || '',
+          text: replyingTo.text || '',
+          ...(replyingTo.imageUrl ? { imageUrl: replyingTo.imageUrl } : {}),
+        };
+      }
+
+      const messagesRef = ref(database, 'messages');
+      const messageText = inputMessage.trim();
+      const timestamp = Date.now();
+      const mediaUrls = uploadedUrls;
+      const messagesToSend = mediaUrls.length > 0
+        ? mediaUrls.map((imageUrl, index) => ({
+            sender: currentUser,
+            receiver: activeChannel,
+            // A typed caption/reply belongs to the first selected image. Each
+            // remaining attachment is a clean, individual message.
+            text: index === 0 ? messageText : '',
+            imageUrl,
+            time: new Date(timestamp + index).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            timestamp: timestamp + index,
+            readBy: { [currentUser]: true },
+            ...(index === 0 && sanitizedReplyTo ? { replyTo: sanitizedReplyTo } : {}),
+          }))
+        : [{
+            sender: currentUser,
+            receiver: activeChannel,
+            text: messageText,
+            time: new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            timestamp,
+            readBy: { [currentUser]: true },
+            ...(sanitizedReplyTo ? { replyTo: sanitizedReplyTo } : {}),
+          }];
+
+      // `update` commits all records together while leaving each photo as an
+      // independent message path, preserving their order in the chat stream.
+      const messageUpdates: Record<string, Record<string, unknown>> = {};
+      messagesToSend.forEach((message) => {
+        const messageRef = push(messagesRef);
+        if (messageRef.key) messageUpdates[`messages/${messageRef.key}`] = message;
+      });
+      await update(ref(database), messageUpdates);
+
       // Sending is an explicit intent to continue at the newest message. This
       // also means a reply written while reading history never gets stranded
       // above the message that was just sent.
@@ -915,6 +958,9 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       setReplyingTo(null);
     } catch (err) {
       console.error('Error sending message:', err);
+      alert(hasDeviceImages ? 'Could not upload or send all images. Please try again.' : 'Could not send the message. Please try again.');
+    } finally {
+      if (hasDeviceImages) setIsUploadingImage(false);
     }
   };
 
@@ -2854,22 +2900,49 @@ export default function SecretChat({ onClose }: SecretChatProps) {
             </div>
           )}
 
-          {/* IMAGE SELECTION PREVIEW BAR */}
-          {imagePreview && !editingMessage && (
-            <div className="relative inline-block max-w-5xl mx-auto">
-              <div className="relative h-20 w-20 overflow-hidden rounded-xl border border-slate-700 bg-slate-900">
-                <img src={imagePreview} alt={selectedGifUrl ? 'GIF preview' : 'Upload preview'} className="h-full w-full object-cover" />
+          {/* IMAGE SELECTION PREVIEW BAR — device batches stay separate
+              attachments and will send as separate messages. */}
+          {(selectedImages.length > 0 || selectedGifUrl) && !editingMessage && (
+            <div className="max-w-5xl mx-auto">
+              <div className="flex max-h-24 flex-wrap gap-2 overflow-y-auto pr-1">
+                {selectedImages.map((attachment, index) => (
+                  <div key={attachment.previewUrl} className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-slate-700 bg-slate-900">
+                    <img src={attachment.previewUrl} alt={`Selected upload ${index + 1}`} className="h-full w-full object-cover" />
+                    <span className="absolute bottom-1 left-1 rounded bg-slate-950/85 px-1.5 py-0.5 text-[9px] font-bold text-emerald-300">
+                      {index + 1}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => removeSelectedImage(index)}
+                      disabled={isUploadingImage}
+                      aria-label={`Remove selected image ${index + 1}`}
+                      className="absolute right-1 top-1 rounded-full bg-slate-950/80 p-1 text-white transition-colors hover:bg-red-600 disabled:opacity-50"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
+                ))}
                 {selectedGifUrl && (
-                  <span className="absolute bottom-1 left-1 rounded bg-slate-950/85 px-1.5 py-0.5 text-[9px] font-bold text-emerald-300">GIF</span>
+                  <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl border border-slate-700 bg-slate-900">
+                    <img src={selectedGifUrl} alt="Selected GIF" className="h-full w-full object-cover" />
+                    <span className="absolute bottom-1 left-1 rounded bg-slate-950/85 px-1.5 py-0.5 text-[9px] font-bold text-emerald-300">GIF</span>
+                    <button
+                      type="button"
+                      onClick={cancelImageSelection}
+                      disabled={isUploadingImage}
+                      aria-label="Remove selected GIF"
+                      className="absolute right-1 top-1 rounded-full bg-slate-950/80 p-1 text-white transition-colors hover:bg-red-600 disabled:opacity-50"
+                    >
+                      <X className="h-3 w-3" />
+                    </button>
+                  </div>
                 )}
-                <button
-                  type="button"
-                  onClick={cancelImageSelection}
-                  className="absolute right-1 top-1 rounded-full bg-slate-950/80 p-1 text-white hover:bg-red-600 transition-colors"
-                >
-                  <X className="h-3 w-3" />
-                </button>
               </div>
+              {selectedImages.length > 1 && (
+                <p className="mt-1 text-[10px] font-medium text-slate-400">
+                  {selectedImages.length} images selected — they will send as separate messages.
+                </p>
+              )}
             </div>
           )}
 
@@ -2879,6 +2952,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
             <input
               type="file"
               accept="image/*"
+              multiple
               ref={fileInputRef}
               onChange={handleImageSelect}
               className="hidden"
@@ -2896,9 +2970,9 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               <button
                 type="button"
                 onClick={() => setShowImageSourcePicker((open) => !open)}
-                disabled={!!editingMessage}
-                title={editingMessage ? 'Finish editing first' : 'Attach an image'}
-                aria-label={editingMessage ? 'Finish editing first' : 'Attach an image'}
+                disabled={!!editingMessage || isUploadingImage}
+                title={editingMessage ? 'Finish editing first' : isUploadingImage ? 'Uploading images' : 'Attach an image'}
+                aria-label={editingMessage ? 'Finish editing first' : isUploadingImage ? 'Uploading images' : 'Attach an image'}
                 aria-haspopup="dialog"
                 aria-expanded={showImageSourcePicker}
                 className="chat-composer-action flex h-11 w-11 items-center justify-center rounded-xl bg-[#2a3942] text-slate-300 hover:text-emerald-400 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-[#2a3942] transition-colors"
@@ -2944,7 +3018,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                     </span>
                     <span>
                       <span className="block">Upload from device</span>
-                      <span className="block text-[10px] font-normal text-slate-400">Choose an existing image</span>
+                      <span className="block text-[10px] font-normal text-slate-400">Choose one or more images</span>
                     </span>
                   </button>
                 </div>
@@ -2957,8 +3031,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                 setShowImageSourcePicker(false);
                 setShowGifPicker(true);
               }}
-              disabled={!!editingMessage}
-              title={editingMessage ? 'Finish editing first' : 'Choose a GIF'}
+              disabled={!!editingMessage || isUploadingImage}
+              title={editingMessage ? 'Finish editing first' : isUploadingImage ? 'Uploading images' : 'Choose a GIF'}
               className="chat-composer-action flex h-11 w-11 items-center justify-center rounded-xl bg-[#2a3942] text-slate-300 hover:text-emerald-400 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-[#2a3942] transition-colors shrink-0"
             >
               <Film className="h-5 w-5" />
@@ -2999,7 +3073,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
             <button
               type="submit"
-              disabled={(!inputMessage.trim() && !selectedImage && !selectedGifUrl) || isUploadingImage}
+              disabled={(!inputMessage.trim() && selectedImages.length === 0 && !selectedGifUrl) || isUploadingImage}
               title={editingMessage ? 'Save changes' : 'Send message'}
               className={`chat-send-button flex h-11 w-11 items-center justify-center rounded-xl text-white disabled:opacity-50 transition-colors shrink-0 ${
                 editingMessage ? 'bg-amber-600 hover:bg-amber-500' : 'bg-[#00a884] hover:bg-[#008f70]'
