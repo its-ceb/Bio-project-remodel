@@ -3,9 +3,9 @@ import {
   Bot, Send, User, Sparkles, RefreshCw, BookOpen, AlertTriangle, X
 } from 'lucide-react';
 import {
-  askGeminiBiology,
-  describeGeminiError,
-  hasGeminiApiKey,
+  askBiologyTutor,
+  describeAiError,
+  isAiServiceConfigured,
   type ChatTurn,
 } from '@/lib/gemini';
 
@@ -44,7 +44,7 @@ export default function AIAssistant({ isOpen = true, onClose }: AIAssistantProps
   const [isLoading, setIsLoading] = useState(false);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  const keyPresent = hasGeminiApiKey();
+  const aiServiceConfigured = isAiServiceConfigured();
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -78,7 +78,7 @@ export default function AIAssistant({ isOpen = true, onClose }: AIAssistantProps
     setIsLoading(true);
 
     try {
-      const reply = await askGeminiBiology(trimmed, buildHistory(base));
+      const reply = await askBiologyTutor(trimmed, buildHistory(base));
 
       setMessages((prev) => [
         ...prev,
@@ -91,8 +91,8 @@ export default function AIAssistant({ isOpen = true, onClose }: AIAssistantProps
       ]);
     } catch (err) {
       // Show EXACTLY what went wrong instead of a generic message
-      const { message, hint } = describeGeminiError(err);
-      console.error('Gemini error:', err);
+      const { message, hint } = describeAiError(err);
+      console.error('AI service error:', err);
 
       setMessages((prev) => [
         ...prev,
@@ -138,7 +138,7 @@ export default function AIAssistant({ isOpen = true, onClose }: AIAssistantProps
             <h3 className="text-base font-bold text-slate-100 flex items-center gap-2">
               NEET Biology AI Assistant
               <span className="rounded-full bg-emerald-500/20 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-400 border border-emerald-500/30">
-                Gemini Powered
+                Cloudflare Workers AI
               </span>
             </h3>
             <p className="text-xs text-slate-400">Free-tier saver · concise NCERT guidance</p>
@@ -157,14 +157,14 @@ export default function AIAssistant({ isOpen = true, onClose }: AIAssistantProps
         )}
       </div>
 
-      {/* MISSING KEY BANNER — says exactly what to do */}
-      {!keyPresent && (
+      {/* AI SERVICE CONFIGURATION BANNER */}
+      {!aiServiceConfigured && (
         <div className="flex items-start gap-2 border-b border-amber-500/20 bg-amber-500/10 px-5 py-3 text-[11px] text-amber-300">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
           <div>
-            <p className="font-bold">The AI tutor is unavailable right now.</p>
+            <p className="font-bold">The AI tutor is not connected yet.</p>
             <p className="mt-0.5 text-amber-200/80">
-              No Gemini API key is configured for this build, so questions cannot be answered. The
+              Add VITE_CLOUDFLARE_AI_URL to Netlify and redeploy after your Worker is live. The
               flashcards and MCQ practice work as normal.
             </p>
           </div>

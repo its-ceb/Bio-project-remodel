@@ -1,0 +1,15 @@
+name = "neet-biology-ai"
+main = "workers/ai.ts"
+compatibility_date = "2026-09-29"
+workers_dev = true
+
+# This exposes Workers AI inside workers/ai.ts as env.AI. It is a binding,
+# not a browser-visible API key.
+[ai]
+binding = "AI"
+
+# Before deploying, replace this with the exact URL of your Netlify site.
+# You may comma-separate your production and local development origins.
+[vars]
+ALLOWED_ORIGIN = "https://YOUR-NETLIFY-SITE.netlify.app"
+AI_MODEL = "@cf/meta/llama-3.3-70b-instruct-fp8-fast"
