@@ -2984,9 +2984,9 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                 <div
                   role="dialog"
                   aria-label="Choose image source"
-                  className="chat-popover chat-attachment-source chat-popup-enter absolute bottom-[calc(100%+0.6rem)] left-0 z-30 w-60 rounded-2xl border border-slate-700 bg-[#1f2c34] p-2 shadow-2xl"
+                  className="chat-popover chat-attachment-source chat-popup-enter absolute bottom-[calc(100%+0.6rem)] left-0 z-30 w-60 space-y-2 rounded-2xl border border-slate-700 bg-[#1f2c34] p-2.5 shadow-2xl"
                 >
-                  <p className="px-2 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                  <p className="px-1 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                     Add an image
                   </p>
                   <button
@@ -2995,12 +2995,12 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                       setShowImageSourcePicker(false);
                       cameraInputRef.current?.click();
                     }}
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-slate-100 transition-colors hover:bg-slate-700/70"
+                    className="chat-attachment-choice group flex min-h-[72px] w-full touch-manipulation select-none items-center gap-3 rounded-xl border border-slate-700/80 bg-slate-900/40 px-3 py-2.5 text-left text-sm font-semibold text-slate-100 shadow-sm transition-all hover:border-emerald-400/50 hover:bg-slate-700/70 active:scale-[0.98]"
                   >
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-300">
+                    <span className="pointer-events-none flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-300">
                       <Camera className="h-4 w-4" />
                     </span>
-                    <span>
+                    <span className="pointer-events-none">
                       <span className="block">Take a photo</span>
                       <span className="block text-[10px] font-normal text-slate-400">Use your camera</span>
                     </span>
@@ -3011,12 +3011,12 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                       setShowImageSourcePicker(false);
                       fileInputRef.current?.click();
                     }}
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-slate-100 transition-colors hover:bg-slate-700/70"
+                    className="chat-attachment-choice group flex min-h-[72px] w-full touch-manipulation select-none items-center gap-3 rounded-xl border border-slate-700/80 bg-slate-900/40 px-3 py-2.5 text-left text-sm font-semibold text-slate-100 shadow-sm transition-all hover:border-emerald-400/50 hover:bg-slate-700/70 active:scale-[0.98]"
                   >
-                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-500/15 text-sky-300">
+                    <span className="pointer-events-none flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-500/15 text-sky-300">
                       <ImageIcon className="h-4 w-4" />
                     </span>
-                    <span>
+                    <span className="pointer-events-none">
                       <span className="block">Upload from device</span>
                       <span className="block text-[10px] font-normal text-slate-400">Choose one or more images</span>
                     </span>

@@ -253,6 +253,19 @@
     backdrop-filter: blur(10px) saturate(135%);
   }
 
+  /* The camera/device menu uses full-width button cards: taps on the
+     icon, label, helper text, or empty card space all trigger the source. */
+  .secret-chat.chat-liquid .chat-attachment-choice {
+    background: rgb(30 51 74 / 0.56);
+    border-color: rgb(191 219 254 / 0.16);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.045);
+  }
+
+  .secret-chat.chat-liquid .chat-attachment-choice:hover {
+    background: rgb(49 74 100 / 0.7);
+    border-color: rgb(94 234 212 / 0.46);
+  }
+
   /* Motion stays short and transform/opacity-only so scrolling remains cheap.
      Message popups are portalled to document.body, hence their selectors are
      deliberately not nested under .secret-chat. */
