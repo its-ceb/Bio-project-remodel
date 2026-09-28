@@ -121,6 +121,9 @@
   }
 
   .secret-chat.chat-liquid .chat-message-scroll {
+    /* Pagination restores scrollTop itself; disable the browser's separate
+       scroll anchoring so a prepend cannot be compensated twice. */
+    overflow-anchor: none;
     background:
       radial-gradient(circle at 50% -8%, rgb(20 184 166 / 0.08), transparent 26rem),
       linear-gradient(180deg, rgb(7 17 31 / 0.18), rgb(15 23 42 / 0.08));
@@ -250,6 +253,115 @@
     backdrop-filter: blur(10px) saturate(135%);
   }
 
+  /* Motion stays short and transform/opacity-only so scrolling remains cheap.
+     Message popups are portalled to document.body, hence their selectors are
+     deliberately not nested under .secret-chat. */
+  @keyframes secret-chat-popover-in {
+    from {
+      opacity: 0;
+      transform: translateY(-6px) scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes secret-chat-popover-side-in {
+    from {
+      opacity: 0;
+      transform: translateX(6px) scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+  }
+
+  @keyframes secret-chat-reaction-grid-in {
+    from {
+      opacity: 0;
+      transform: translateY(-5px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes secret-chat-reaction-pulse {
+    0% { transform: scale(0.82); }
+    58% { transform: scale(1.16); }
+    100% { transform: scale(1); }
+  }
+
+  @keyframes secret-chat-panel-in {
+    from {
+      opacity: 0;
+      transform: translateX(18px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes secret-chat-panel-out {
+    from {
+      opacity: 1;
+      transform: translateX(0);
+    }
+    to {
+      opacity: 0;
+      transform: translateX(18px);
+    }
+  }
+
+  .chat-popup-enter {
+    animation: secret-chat-popover-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    transform-origin: top center;
+  }
+
+  .secret-chat.chat-liquid .chat-channel-dropdown {
+    animation: secret-chat-popover-side-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    transform-origin: top right;
+  }
+
+  .secret-chat.chat-liquid .chat-reaction-grid {
+    animation: secret-chat-reaction-grid-in 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .chat-reaction-option,
+  .chat-reaction-toggle {
+    transition: transform 130ms ease, background-color 130ms ease, box-shadow 130ms ease;
+  }
+
+  .chat-reaction-option:active,
+  .chat-reaction-toggle:active {
+    transform: scale(0.86);
+  }
+
+  .chat-reaction-toggle svg {
+    transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .chat-reaction-toggle-open svg {
+    transform: rotate(90deg);
+  }
+
+  .secret-chat.chat-liquid .chat-reaction-pill-pulse {
+    animation: secret-chat-reaction-pulse 250ms cubic-bezier(0.22, 1.35, 0.36, 1);
+  }
+
+  .secret-chat.chat-liquid .chat-participants-opening {
+    animation: secret-chat-panel-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .secret-chat.chat-liquid .chat-participants-closing {
+    animation: secret-chat-panel-out 210ms cubic-bezier(0.4, 0, 1, 1) both;
+    pointer-events: none;
+  }
+
   .secret-chat.chat-liquid ::selection {
     background: rgb(45 212 191 / 0.38);
     color: white;
@@ -272,7 +384,10 @@
   @media (prefers-reduced-motion: reduce), (prefers-reduced-transparency: reduce) {
     .secret-chat.chat-liquid *,
     .secret-chat.chat-liquid *::before,
-    .secret-chat.chat-liquid *::after {
+    .secret-chat.chat-liquid *::after,
+    .chat-popup-enter,
+    .chat-reaction-option,
+    .chat-reaction-toggle {
       animation-duration: 0.01ms !important;
       animation-iteration-count: 1 !important;
       transition-duration: 0.01ms !important;
