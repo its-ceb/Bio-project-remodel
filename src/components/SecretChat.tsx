@@ -2857,7 +2857,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         </div>
 
         {/* INPUT & ATTACHMENT PREVIEW PANEL */}
-        <div className="chat-composer space-y-2 border-t border-slate-800 bg-[#1f2c34] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="chat-composer relative z-40 space-y-2 border-t border-slate-800 bg-[#1f2c34] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           {/* EDIT MESSAGE BAR */}
           {editingMessage && (
             <div className="flex items-center justify-between rounded-xl bg-[#2a3942] px-3 py-2 border-l-4 border-amber-400 text-xs text-slate-200 max-w-5xl mx-auto">
@@ -2984,7 +2984,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                 <div
                   role="dialog"
                   aria-label="Choose image source"
-                  className="chat-popover chat-attachment-source chat-popup-enter absolute bottom-[calc(100%+0.6rem)] left-0 z-30 w-60 space-y-2 rounded-2xl border border-slate-700 bg-[#1f2c34] p-2.5 shadow-2xl"
+                  className="chat-popover chat-attachment-source chat-popup-enter absolute bottom-[calc(100%+0.6rem)] left-0 z-[60] w-60 space-y-2 rounded-2xl border border-slate-700 bg-[#1f2c34] p-2.5 shadow-2xl"
                 >
                   <p className="px-1 pb-0.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
                     Add an image
