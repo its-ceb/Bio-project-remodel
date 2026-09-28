@@ -236,6 +236,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   // snapshot after asking for a bigger database window.
   const [messageSnapshotVersion, setMessageSnapshotVersion] = useState(0);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const [newMessagesBelow, setNewMessagesBelow] = useState(0);
 
   // Popovers are dismissed by clicking anywhere. The message menu and the
   // reaction picker render through a portal onto document.body, so they sit
@@ -274,6 +275,9 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const isLoadingOlderRef = useRef(false);
   const loadingOlderTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const participantCloseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Latest message we have observed per channel. This lets the jump button
+  // count only messages that arrive after the reader scrolls away.
+  const latestObservedMessageIdRef = useRef<Record<string, string | undefined>>({});
 
   // Keeps the latest active channel available inside firebase listeners
   const activeChannelRef = useRef<string>(activeChannel);
@@ -892,6 +896,12 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
     try {
       await push(messagesRef, newMessage);
+      // Sending is an explicit intent to continue at the newest message. This
+      // also means a reply written while reading history never gets stranded
+      // above the message that was just sent.
+      stickToBottomRef.current = true;
+      setShowJumpToLatest(false);
+      setNewMessagesBelow(0);
       setInputMessage('');
       cancelImageSelection();
       setReplyingTo(null);
@@ -1439,6 +1449,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
      limitToLast() and the same limitToLast() path is what keeps the initial
      download small. */
   const firstDisplayedMessageId = displayedMessages[0]?.id;
+  const latestDisplayedMessageId = displayedMessages[displayedMessages.length - 1]?.id;
 
   const releasePaginationLock = () => {
     paginationLockRef.current = false;
@@ -1492,8 +1503,12 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     if (!el) return;
 
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-    stickToBottomRef.current = distanceFromBottom < 120;
-    setShowJumpToLatest(distanceFromBottom > 400);
+    const atLatest = distanceFromBottom < 120;
+    stickToBottomRef.current = atLatest;
+    // Make the original down-arrow available as soon as there is meaningful
+    // distance to travel, rather than waiting for an arbitrary long scroll.
+    setShowJumpToLatest(distanceFromBottom > 120);
+    if (atLatest) setNewMessagesBelow(0);
 
     if (
       el.scrollTop <= SCROLL_LOAD_TRIGGER &&
@@ -1521,11 +1536,39 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   useEffect(() => {
     stickToBottomRef.current = true;
     setShowJumpToLatest(false);
+    setNewMessagesBelow(0);
     pendingChannelJumpRef.current = true;
     pendingScrollRestoreRef.current = null;
     paginationCooldownUntilRef.current = 0;
     releasePaginationLock();
   }, [activeChannel]);
+
+  /* When the reader is away from the bottom, keep an inbox-style count for
+     messages that arrive below their current reading position. The initial
+     snapshot and older-history pagination only establish/update the marker;
+     neither are treated as unread arrivals. */
+  useEffect(() => {
+    const latestId = latestDisplayedMessageId;
+    if (!latestId) {
+      latestObservedMessageIdRef.current[activeChannel] = undefined;
+      return;
+    }
+
+    const previouslyObservedId = latestObservedMessageIdRef.current[activeChannel];
+    latestObservedMessageIdRef.current[activeChannel] = latestId;
+    if (!previouslyObservedId || previouslyObservedId === latestId || stickToBottomRef.current) return;
+
+    const previousIndex = displayedMessages.findIndex((message) => message.id === previouslyObservedId);
+    const newlyArrived = previousIndex >= 0
+      ? displayedMessages.slice(previousIndex + 1)
+      : [displayedMessages[displayedMessages.length - 1]];
+    const incomingCount = newlyArrived.filter((message) => message?.sender !== currentUser).length;
+
+    if (incomingCount > 0) {
+      setNewMessagesBelow((count) => count + incomingCount);
+      setShowJumpToLatest(true);
+    }
+  }, [activeChannel, currentUser, displayedMessages, latestDisplayedMessageId]);
 
   useEffect(() => {
     return () => {
@@ -2735,18 +2778,26 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           <div ref={messagesEndRef} />
           </div>
 
-          {/* JUMP TO LATEST */}
-          {showJumpToLatest && (
+          {/* JUMP TO LATEST — the original down arrow gains a compact
+              green inbox badge whenever new incoming messages arrive below. */}
+          {(showJumpToLatest || newMessagesBelow > 0) && (
             <button
               onClick={() => {
                 stickToBottomRef.current = true;
                 setShowJumpToLatest(false);
+                setNewMessagesBelow(0);
                 scrollToBottom('smooth');
               }}
-              title="Jump to latest messages"
-              className="absolute bottom-4 right-4 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-[#202c33] text-emerald-400 shadow-2xl hover:bg-slate-700 transition-colors"
+              title={newMessagesBelow > 0 ? `Jump to ${newMessagesBelow} new message${newMessagesBelow === 1 ? '' : 's'}` : 'Jump to latest messages'}
+              aria-label={newMessagesBelow > 0 ? `Jump to ${newMessagesBelow} new messages` : 'Jump to latest messages'}
+              className="chat-jump-to-latest absolute bottom-4 right-4 z-20 flex h-10 w-10 items-center justify-center rounded-full border border-slate-700 bg-[#202c33] text-emerald-400 shadow-2xl hover:bg-slate-700 transition-colors"
             >
               <ArrowDown className="h-5 w-5" />
+              {newMessagesBelow > 0 && (
+                <span className="absolute -right-1 -top-1 grid min-h-5 min-w-5 place-items-center rounded-full border-2 border-[#0b141a] bg-emerald-500 px-1 text-[10px] font-extrabold leading-none text-white shadow-lg">
+                  {newMessagesBelow > 99 ? '99+' : newMessagesBelow}
+                </span>
+              )}
             </button>
           )}
         </div>
