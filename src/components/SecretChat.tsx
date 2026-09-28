@@ -133,6 +133,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [expandedImageUrl, setExpandedImageUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const messageInputRef = useRef<HTMLTextAreaElement>(null);
 
   // Reply State
   const [replyingTo, setReplyingTo] = useState<ReplyContext | null>(null);
@@ -1497,6 +1498,12 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     setEditingMessage(null);
     setActiveMessageMenuId(null);
     setMobilePanel('chat');
+
+    // On phones, opening a conversation should put the next action within
+    // reach. Wait until the single-pane chat view is mounted before focusing.
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      window.setTimeout(() => messageInputRef.current?.focus(), 120);
+    }
   };
 
   /* ------------------------------------------------------------------ */
@@ -1517,7 +1524,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     return (
       <div
         data-msg-actions
-        className={`flex shrink-0 items-center gap-0.5 transition-opacity duration-150 ${
+        className={`flex shrink-0 items-center gap-1 transition-opacity duration-150 ${
           visible
             ? 'opacity-100'
             : 'pointer-events-none opacity-0 group-hover:pointer-events-auto group-hover:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100'
@@ -1527,7 +1534,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           data-action-react={msg.id}
           onClick={() => openReactionPicker(msg)}
           title="React to this message"
-          className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
+          className="flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-700 hover:text-white"
         >
           <SmilePlus className="h-4 w-4" />
         </button>
@@ -1535,7 +1542,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           data-action-menu={msg.id}
           onClick={() => openMessageMenu(msg)}
           title="More options"
-          className="flex h-7 w-7 items-center justify-center rounded-full text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
+          className="flex h-9 w-9 items-center justify-center rounded-full text-slate-400 transition-colors hover:bg-slate-700 hover:text-white"
         >
           <MoreVertical className="h-4 w-4" />
         </button>
@@ -1679,8 +1686,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
   if (!currentUser) {
     return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950 p-4 font-sans text-slate-100">
-        <div className="w-full max-w-md rounded-3xl border border-slate-800 bg-slate-900 p-8 shadow-2xl relative">
+      <div className="secret-chat fixed inset-0 z-50 flex h-[100dvh] min-h-[100dvh] items-center justify-center bg-slate-950 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] font-sans text-slate-100">
+        <div className="relative w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl sm:rounded-3xl sm:p-8">
           <button
             onClick={onClose}
             className="absolute right-5 top-5 flex items-center gap-1.5 rounded-full bg-red-600/10 border border-red-500/20 px-3 py-1.5 text-xs font-bold text-red-500 hover:bg-red-600 hover:text-white transition-all shadow-sm"
@@ -1855,9 +1862,9 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex bg-[#0b141a] font-sans text-slate-100 overflow-hidden">
+    <div className="secret-chat fixed inset-0 z-50 flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-[#0b141a] pt-[env(safe-area-inset-top)] font-sans text-slate-100">
       {/* SIDEBAR */}
-      <aside className={`${mobilePanel === 'list' ? 'flex' : 'hidden'} md:flex w-full md:w-64 lg:w-72 flex-col border-r border-slate-800 bg-[#111b21] shrink-0`}>
+      <aside className={`${mobilePanel === 'list' ? 'flex' : 'hidden'} w-full shrink-0 flex-col border-r border-slate-800 bg-[#111b21] md:flex md:w-64 lg:w-72`}>
         <div
           onClick={() => setEditingProfile(true)}
           title="Click to edit your profile"
@@ -2064,7 +2071,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         </div>
 
         {/* SIDEBAR FOOTER: SETTINGS & NEW DM */}
-        <div className="p-3 border-t border-slate-800 bg-[#111b21] flex items-center justify-between gap-2">
+        <div className="flex items-center justify-between gap-2 border-t border-slate-800 bg-[#111b21] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button
             onClick={() => setShowSettingsModal(true)}
             title="Settings"
@@ -2087,12 +2094,13 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       </aside>
 
       {/* MESSAGING CONTAINER */}
-      <main className={`${mobilePanel === 'chat' ? 'flex' : 'hidden'} md:flex flex-1 flex-col bg-[#0b141a] relative w-full`}>
-        <header className="flex items-center justify-between border-b border-slate-800 bg-[#1f2c34] px-4 py-3 relative">
-          <div className="flex items-center gap-2 sm:gap-3 overflow-hidden">
+      <main className={`${mobilePanel === 'chat' ? 'flex' : 'hidden'} relative w-full min-w-0 flex-1 flex-col bg-[#0b141a] md:flex`}>
+        <header className="relative flex items-center justify-between gap-2 border-b border-slate-800 bg-[#1f2c34] px-3 py-2.5 sm:px-4 sm:py-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
             <button
               onClick={() => setMobilePanel('list')}
-              className="md:hidden -ml-1 shrink-0 rounded-xl p-2 text-slate-300 hover:bg-slate-700 hover:text-white transition-colors"
+              aria-label="Back to chats"
+              className="-ml-1 shrink-0 rounded-xl p-2.5 text-slate-300 transition-colors hover:bg-slate-700 hover:text-white md:hidden"
             >
               <ArrowLeft className="h-5 w-5" />
             </button>
@@ -2116,7 +2124,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex shrink-0 items-center gap-0.5 sm:gap-2">
             <button
               onClick={() => {
                 const opening = !showParticipants;
@@ -2125,7 +2133,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                 setMobilePanel(opening ? 'participants' : 'chat');
               }}
               title="Toggle participants"
-              className={`p-2 rounded-xl transition-colors ${
+              aria-label="Toggle participants"
+              className={`rounded-xl p-2.5 transition-colors ${
                 showParticipants
                   ? 'bg-[#2a3942] text-emerald-400'
                   : 'text-slate-400 hover:bg-slate-700 hover:text-white'
@@ -2137,7 +2146,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
             <div ref={channelMenuRef} className="relative">
               <button
                 onClick={() => setShowChannelMenu((prev) => !prev)}
-                className="p-2 rounded-xl text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
+                aria-label="Chat options"
+                className="rounded-xl p-2.5 text-slate-400 transition-colors hover:bg-slate-700 hover:text-white"
               >
                 <MoreVertical className="h-5 w-5" />
               </button>
@@ -2172,9 +2182,10 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
             <button
               onClick={onClose}
-              className="flex items-center gap-2 rounded-xl bg-red-600/10 border border-red-500/30 px-3.5 py-2 text-xs font-bold text-red-400 hover:bg-red-600 hover:text-white transition-all shadow-md"
+              aria-label="Exit secret chat"
+              className="flex items-center gap-1.5 rounded-xl border border-red-500/30 bg-red-600/10 px-2.5 py-2.5 text-xs font-bold text-red-400 shadow-md transition-all hover:bg-red-600 hover:text-white sm:px-3.5 sm:py-2"
             >
-              <Power className="h-4 w-4" /> Exit
+              <Power className="h-4 w-4" /> <span className="hidden sm:inline">Exit</span>
             </button>
           </div>
         </header>
@@ -2212,7 +2223,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           <div
             ref={scrollContainerRef}
             onScroll={handleMessagesScroll}
-            className="h-full overflow-y-auto p-4 space-y-2 bg-[#0b141a]"
+            className="h-full space-y-2 overflow-y-auto bg-[#0b141a] p-3 sm:p-4"
           >
           {/* LOAD OLDER — reveals already-downloaded messages instantly, and
               widens the DB window when there is nothing left in memory */}
@@ -2305,7 +2316,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                     <div
                       onDoubleClick={() => toggleReaction(msg, DOUBLE_TAP_REACTION)}
                       title="Double tap to react ❤️"
-                      className={`max-w-[78%] sm:max-w-[62%] rounded-2xl px-3.5 py-2 shadow-sm text-sm relative ${
+                      className={`relative max-w-[calc(100%-5rem)] rounded-2xl px-3.5 py-2 text-sm shadow-sm sm:max-w-[62%] ${
                         isSelf
                           ? 'bg-[#005c4b] text-[#e9edef] rounded-tr-none'
                           : 'bg-[#202c33] text-[#e9edef] rounded-tl-none'
@@ -2462,7 +2473,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         </div>
 
         {/* INPUT & ATTACHMENT PREVIEW PANEL */}
-        <div className="bg-[#1f2c34] p-3 border-t border-slate-800 space-y-2">
+        <div className="space-y-2 border-t border-slate-800 bg-[#1f2c34] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           {/* EDIT MESSAGE BAR */}
           {editingMessage && (
             <div className="flex items-center justify-between rounded-xl bg-[#2a3942] px-3 py-2 border-l-4 border-amber-400 text-xs text-slate-200 max-w-5xl mx-auto">
@@ -2543,6 +2554,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
             {/* MULTI-LINE TEXTAREA INPUT */}
             <textarea
+              ref={messageInputRef}
               rows={1}
               value={inputMessage}
               onChange={handleInputChange}
@@ -2557,7 +2569,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                   ? `Message ${activeGroup.name} (Shift+Enter for new line)`
                   : `Message @${activeChannel} (Shift+Enter for new line)`
               }
-              className={`flex-1 max-h-32 min-h-[44px] resize-none rounded-xl bg-[#2a3942] px-4 py-3 text-sm text-[#d1d7db] placeholder-[#8696a0] outline-none focus:ring-1 ${
+              className={`min-h-[44px] max-h-32 flex-1 resize-none rounded-xl bg-[#2a3942] px-4 py-3 text-base text-[#d1d7db] placeholder-[#8696a0] outline-none focus:ring-1 sm:text-sm ${
                 editingMessage ? 'focus:ring-amber-500' : 'focus:ring-emerald-500'
               }`}
             />
@@ -2595,7 +2607,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
       {/* PARTICIPANTS SIDEBAR (context aware, Discord style) */}
       {showParticipants && (
-        <aside className={`${mobilePanel === 'participants' ? 'flex' : 'hidden'} md:flex w-full md:w-64 shrink-0 flex-col border-l border-slate-800 bg-[#111b21]`}>
+        <aside className={`${mobilePanel === 'participants' ? 'flex' : 'hidden'} w-full shrink-0 flex-col border-l border-slate-800 bg-[#111b21] md:flex md:w-64`}>
           <div className="flex items-center justify-between gap-2 border-b border-slate-800 bg-[#202c33] px-4 py-3.5">
             <div className="flex items-center gap-2.5 overflow-hidden">
               <div className="shrink-0">{renderChannelAvatar(activeChannel, 'h-8 w-8')}</div>
@@ -2653,18 +2665,18 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                         )}
                       </div>
                       {u !== currentUser && (
-                        <span
-                          role="button"
-                          tabIndex={-1}
+                        <button
+                          type="button"
                           title={`Message @${u}`}
+                          aria-label={`Message @${u}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleStartDMWith(u);
                           }}
-                          className="opacity-0 group-hover/member:opacity-100 rounded-md p-1 text-slate-400 hover:text-emerald-400 hover:bg-slate-700/60 transition-all"
+                          className="rounded-md p-2 text-slate-400 opacity-100 transition-all hover:bg-slate-700/60 hover:text-emerald-400 md:p-1 md:opacity-0 md:group-hover/member:opacity-100"
                         >
                           <MessageSquare className="h-3.5 w-3.5" />
-                        </span>
+                        </button>
                       )}
                     </div>
                   ))}
@@ -2701,18 +2713,18 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                         <span className="block text-[10px] text-slate-500">Offline</span>
                       </div>
                       {u !== currentUser && (
-                        <span
-                          role="button"
-                          tabIndex={-1}
+                        <button
+                          type="button"
                           title={`Message @${u}`}
+                          aria-label={`Message @${u}`}
                           onClick={(e) => {
                             e.stopPropagation();
                             handleStartDMWith(u);
                           }}
-                          className="opacity-0 group-hover/member:opacity-100 rounded-md p-1 text-slate-400 hover:text-emerald-400 hover:bg-slate-700/60 transition-all"
+                          className="rounded-md p-2 text-slate-400 opacity-100 transition-all hover:bg-slate-700/60 hover:text-emerald-400 md:p-1 md:opacity-0 md:group-hover/member:opacity-100"
                         >
                           <MessageSquare className="h-3.5 w-3.5" />
-                        </span>
+                        </button>
                       )}
                     </div>
                   ))}

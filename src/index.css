@@ -64,6 +64,16 @@
 }
 
 @layer utilities {
+  /* Prevent Safari from zooming into compact chat fields while preserving
+     the desktop type scale. */
+  @media (max-width: 767px) {
+    .secret-chat input,
+    .secret-chat textarea,
+    .secret-chat select {
+      font-size: 16px;
+    }
+  }
+
   .animate-shake {
     animation: shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
   }
