@@ -1702,7 +1702,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       >
         {activeReactionPickerId ? (
           /* Instagram-style quick reactions with an expandable popular-emoji tray. */
-          <div className="w-[min(18rem,calc(100vw-1rem))] rounded-2xl border border-slate-700 bg-[#1f2c34] p-2 shadow-2xl">
+          <div className="chat-popover w-[min(18rem,calc(100vw-1rem))] rounded-2xl border border-slate-700 bg-[#1f2c34] p-2 shadow-2xl">
             <div className="flex items-center justify-between gap-0.5">
               {QUICK_REACTIONS.map((emoji) => {
                 const mine = myReactions.includes(emoji);
@@ -1755,7 +1755,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           </div>
         ) : (
           /* 3-DOT MENU */
-          <div className="w-44 rounded-xl border border-slate-800 bg-[#1f2c34] p-1 shadow-2xl">
+          <div className="chat-popover w-44 rounded-xl border border-slate-800 bg-[#1f2c34] p-1 shadow-2xl">
             {/* QUICK REACTIONS INSIDE THE MENU */}
             <div className="mb-1 flex items-center justify-between gap-0.5 border-b border-slate-700/60 px-0.5 pb-1.5">
               {QUICK_REACTIONS.map((emoji) => (
@@ -1840,8 +1840,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
   if (!currentUser) {
     return (
-      <div className="secret-chat fixed inset-0 z-50 flex h-[100dvh] min-h-[100dvh] items-center justify-center bg-slate-950 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] font-sans text-slate-100">
-        <div className="relative w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl sm:rounded-3xl sm:p-8">
+      <div className="secret-chat chat-liquid fixed inset-0 z-50 flex h-[100dvh] min-h-[100dvh] items-center justify-center bg-slate-950 p-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))] font-sans text-slate-100">
+        <div className="chat-auth-card relative w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900 p-5 shadow-2xl sm:rounded-3xl sm:p-8">
           <button
             onClick={onClose}
             className="absolute right-5 top-5 flex items-center gap-1.5 rounded-full bg-red-600/10 border border-red-500/20 px-3 py-1.5 text-xs font-bold text-red-500 hover:bg-red-600 hover:text-white transition-all shadow-sm"
@@ -1998,7 +1998,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     sectionKey: string;
     action?: React.ReactNode;
   }) => (
-    <div className="group/section flex items-center justify-between px-1 mb-1">
+    <div className="chat-section-header group/section flex items-center justify-between px-1 mb-1">
       <button
         onClick={() => toggleSection(sectionKey)}
         className="flex items-center gap-0.5 text-[10px] font-extrabold tracking-wider text-slate-400 uppercase hover:text-slate-200 transition-colors"
@@ -2016,13 +2016,13 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   );
 
   return (
-    <div className="secret-chat fixed inset-0 z-50 flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-[#0b141a] pt-[env(safe-area-inset-top)] font-sans text-slate-100">
+    <div className="secret-chat chat-liquid fixed inset-0 z-50 flex h-[100dvh] min-h-[100dvh] overflow-hidden bg-[#0b141a] pt-[env(safe-area-inset-top)] font-sans text-slate-100">
       {/* SIDEBAR */}
-      <aside className={`${mobilePanel === 'list' ? 'flex' : 'hidden'} w-full shrink-0 flex-col border-r border-slate-800 bg-[#111b21] md:flex md:w-64 lg:w-72`}>
+      <aside className={`chat-sidebar ${mobilePanel === 'list' ? 'flex' : 'hidden'} w-full shrink-0 flex-col border-r border-slate-800 bg-[#111b21] md:flex md:w-64 lg:w-72`}>
         <div
           onClick={() => setEditingProfile(true)}
           title="Click to edit your profile"
-          className="flex items-center justify-between border-b border-slate-800 bg-[#202c33] px-4 py-3.5 cursor-pointer hover:bg-[#2a3942] transition-colors group"
+          className="chat-sidebar-header flex items-center justify-between border-b border-slate-800 bg-[#202c33] px-4 py-3.5 cursor-pointer hover:bg-[#2a3942] transition-colors group"
         >
           <div className="flex items-center gap-2.5 overflow-hidden">
             <div className="relative">
@@ -2059,10 +2059,10 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               {!collapsedSections['channels'] && (
                 <button
                   onClick={() => openChannel('general')}
-                  className={`w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-left transition-colors ${
+                  className={`chat-channel-row w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-left transition-colors ${
                     activeChannel === 'general'
-                      ? 'bg-[#2a3942] text-white'
-                      : 'text-slate-300 hover:bg-[#202c33]'
+                      ? 'chat-channel-row-active text-white'
+                      : 'text-slate-300'
                   }`}
                 >
                   <Hash
@@ -2120,10 +2120,10 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                         <button
                           key={g.id}
                           onClick={() => openChannel(key)}
-                          className={`w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-left transition-colors ${
+                          className={`chat-channel-row w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-left transition-colors ${
                             activeChannel === key
-                              ? 'bg-[#2a3942] text-white'
-                              : 'text-slate-300 hover:bg-[#202c33]'
+                              ? 'chat-channel-row-active text-white'
+                              : 'text-slate-300'
                           }`}
                         >
                           {renderGroupAvatar(g, 'h-8 w-8')}
@@ -2184,10 +2184,10 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                         <button
                           key={username}
                           onClick={() => openChannel(username)}
-                          className={`w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-left transition-colors ${
+                          className={`chat-channel-row w-full flex items-center gap-2.5 px-2 py-2 rounded-lg text-left transition-colors ${
                             activeChannel === username
-                              ? 'bg-[#2a3942] text-white'
-                              : 'text-slate-300 hover:bg-[#202c33]'
+                              ? 'chat-channel-row-active text-white'
+                              : 'text-slate-300'
                           }`}
                         >
                           <div className="relative shrink-0">
@@ -2225,7 +2225,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         </div>
 
         {/* SIDEBAR FOOTER: SETTINGS & NEW DM */}
-        <div className="flex items-center justify-between gap-2 border-t border-slate-800 bg-[#111b21] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="chat-sidebar-footer flex items-center justify-between gap-2 border-t border-slate-800 bg-[#111b21] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           <button
             onClick={() => setShowSettingsModal(true)}
             title="Settings"
@@ -2248,8 +2248,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       </aside>
 
       {/* MESSAGING CONTAINER */}
-      <main className={`${mobilePanel === 'chat' ? 'flex' : 'hidden'} relative w-full min-w-0 flex-1 flex-col bg-[#0b141a] md:flex`}>
-        <header className="relative flex items-center justify-between gap-2 border-b border-slate-800 bg-[#1f2c34] px-3 py-2.5 sm:px-4 sm:py-3">
+      <main className={`chat-main ${mobilePanel === 'chat' ? 'flex' : 'hidden'} relative w-full min-w-0 flex-1 flex-col bg-[#0b141a] md:flex`}>
+        <header className="chat-header relative flex items-center justify-between gap-2 border-b border-slate-800 bg-[#1f2c34] px-3 py-2.5 sm:px-4 sm:py-3">
           <div className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden sm:gap-3">
             <button
               onClick={() => setMobilePanel('list')}
@@ -2351,7 +2351,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               const el = document.getElementById(`msg-${pinnedMessage.messageId}`);
               el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }}
-            className="flex items-center justify-between border-b border-emerald-500/30 bg-[#18252d] px-4 py-2 text-xs text-slate-200 cursor-pointer hover:bg-[#202c33] transition-colors"
+            className="chat-pin-banner flex items-center justify-between border-b border-emerald-500/30 bg-[#18252d] px-4 py-2 text-xs text-slate-200 cursor-pointer hover:bg-[#202c33] transition-colors"
           >
             <div className="flex items-center gap-2 overflow-hidden">
               <Pin className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
@@ -2377,7 +2377,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           <div
             ref={scrollContainerRef}
             onScroll={handleMessagesScroll}
-            className="h-full space-y-2 overflow-y-auto bg-[#0b141a] p-3 sm:p-4"
+            className="chat-message-scroll scrollbar-thin h-full space-y-2 overflow-y-auto bg-[#0b141a] p-3 sm:p-4"
           >
           {/* LOAD OLDER — reveals already-downloaded messages instantly, and
               widens the DB window when there is nothing left in memory */}
@@ -2431,7 +2431,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                 <React.Fragment key={msg.id}>
                   {showDateDivider && (
                     <div className="flex items-center justify-center my-4">
-                      <span className="rounded-lg bg-[#182229] px-3 py-1.5 text-[11px] font-semibold text-slate-300 shadow-sm uppercase tracking-wide">
+                      <span className="chat-date-pill rounded-lg bg-[#182229] px-3 py-1.5 text-[11px] font-semibold text-slate-300 shadow-sm uppercase tracking-wide">
                         {formatDateDivider(msg.timestamp)}
                       </span>
                     </div>
@@ -2470,10 +2470,10 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                     <div
                       onDoubleClick={() => toggleReaction(msg, DOUBLE_TAP_REACTION)}
                       title="Double tap to react ❤️"
-                      className={`relative max-w-[calc(100%-5rem)] rounded-2xl px-3.5 py-2 text-sm shadow-sm sm:max-w-[62%] ${
+                      className={`chat-bubble relative max-w-[calc(100%-5rem)] rounded-2xl px-3.5 py-2 text-sm shadow-sm ${msg.imageUrl ? 'sm:max-w-[76%]' : 'sm:max-w-[62%]'} ${
                         isSelf
-                          ? 'bg-[#005c4b] text-[#e9edef] rounded-tr-none'
-                          : 'bg-[#202c33] text-[#e9edef] rounded-tl-none'
+                          ? 'chat-bubble-self text-[#e9edef] rounded-tr-none'
+                          : 'chat-bubble-other text-[#e9edef] rounded-tl-none'
                       } ${isBeingEdited ? 'ring-2 ring-amber-400/70' : ''}`}
                     >
                       {/* SENDER HEADER - Rendered only on the first message of a consecutive series */}
@@ -2511,12 +2511,12 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
                       {/* IMAGE CONTENT */}
                       {msg.imageUrl && (
-                        <div className="my-1 overflow-hidden rounded-xl bg-slate-900 border border-slate-700/50">
+                        <div className="chat-media-frame my-1.5 overflow-hidden rounded-[1.125rem]">
                           <img
                             src={msg.imageUrl}
                             alt="Attachment"
                             onClick={() => setExpandedImageUrl(msg.imageUrl || null)}
-                            className="max-h-72 w-full object-cover cursor-pointer hover:opacity-95 transition-opacity"
+                            className="max-h-[26rem] w-full cursor-pointer object-contain transition-opacity hover:opacity-95"
                           />
                         </div>
                       )}
@@ -2625,7 +2625,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         </div>
 
         {/* INPUT & ATTACHMENT PREVIEW PANEL */}
-        <div className="space-y-2 border-t border-slate-800 bg-[#1f2c34] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+        <div className="chat-composer space-y-2 border-t border-slate-800 bg-[#1f2c34] p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
           {/* EDIT MESSAGE BAR */}
           {editingMessage && (
             <div className="flex items-center justify-between rounded-xl bg-[#2a3942] px-3 py-2 border-l-4 border-amber-400 text-xs text-slate-200 max-w-5xl mx-auto">
@@ -2702,7 +2702,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               onClick={() => fileInputRef.current?.click()}
               disabled={!!editingMessage}
               title={editingMessage ? 'Finish editing first' : 'Attach Image'}
-              className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#2a3942] text-slate-300 hover:text-emerald-400 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-[#2a3942] transition-colors shrink-0"
+              className="chat-composer-action flex h-11 w-11 items-center justify-center rounded-xl bg-[#2a3942] text-slate-300 hover:text-emerald-400 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-[#2a3942] transition-colors shrink-0"
             >
               <ImageIcon className="h-5 w-5" />
             </button>
@@ -2712,7 +2712,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               onClick={() => setShowGifPicker(true)}
               disabled={!!editingMessage}
               title={editingMessage ? 'Finish editing first' : 'Choose a GIF'}
-              className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#2a3942] text-slate-300 hover:text-emerald-400 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-[#2a3942] transition-colors shrink-0"
+              className="chat-composer-action flex h-11 w-11 items-center justify-center rounded-xl bg-[#2a3942] text-slate-300 hover:text-emerald-400 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-[#2a3942] transition-colors shrink-0"
             >
               <Film className="h-5 w-5" />
             </button>
@@ -2734,7 +2734,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                   ? `Message ${activeGroup.name} (Shift+Enter for new line)`
                   : `Message @${activeChannel} (Shift+Enter for new line)`
               }
-              className={`min-h-[44px] max-h-32 flex-1 resize-none rounded-xl bg-[#2a3942] px-4 py-3 text-base text-[#d1d7db] placeholder-[#8696a0] outline-none focus:ring-1 sm:text-sm ${
+              className={`chat-composer-input min-h-[44px] max-h-32 flex-1 resize-none rounded-xl bg-[#2a3942] px-4 py-3 text-base text-[#d1d7db] placeholder-[#8696a0] outline-none focus:ring-1 sm:text-sm ${
                 editingMessage ? 'focus:ring-amber-500' : 'focus:ring-emerald-500'
               }`}
             />
@@ -2754,7 +2754,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               type="submit"
               disabled={(!inputMessage.trim() && !selectedImage && !selectedGifUrl) || isUploadingImage}
               title={editingMessage ? 'Save changes' : 'Send message'}
-              className={`flex h-11 w-11 items-center justify-center rounded-xl text-white disabled:opacity-50 transition-colors shrink-0 ${
+              className={`chat-send-button flex h-11 w-11 items-center justify-center rounded-xl text-white disabled:opacity-50 transition-colors shrink-0 ${
                 editingMessage ? 'bg-amber-600 hover:bg-amber-500' : 'bg-[#00a884] hover:bg-[#008f70]'
               }`}
             >
@@ -2772,8 +2772,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
       {/* PARTICIPANTS SIDEBAR (context aware, Discord style) */}
       {showParticipants && (
-        <aside className={`${mobilePanel === 'participants' ? 'flex' : 'hidden'} w-full shrink-0 flex-col border-l border-slate-800 bg-[#111b21] md:flex md:w-64`}>
-          <div className="flex items-center justify-between gap-2 border-b border-slate-800 bg-[#202c33] px-4 py-3.5">
+        <aside className={`chat-participants ${mobilePanel === 'participants' ? 'flex' : 'hidden'} w-full shrink-0 flex-col border-l border-slate-800 bg-[#111b21] md:flex md:w-64`}>
+          <div className="chat-participants-header flex items-center justify-between gap-2 border-b border-slate-800 bg-[#202c33] px-4 py-3.5">
             <div className="flex items-center gap-2.5 overflow-hidden">
               <div className="shrink-0">{renderChannelAvatar(activeChannel, 'h-8 w-8')}</div>
               <div className="overflow-hidden">
@@ -2806,7 +2806,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                     <div
                       key={u}
                       onClick={() => setInspectingUser(u)}
-                      className="group/member w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-[#2a3942] transition-colors text-left cursor-pointer"
+                      className="chat-participant-row group/member w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-[#2a3942] transition-colors text-left cursor-pointer"
                     >
                       <div className="relative shrink-0">
                         {renderAvatar(u, 'h-8 w-8')}
@@ -2863,7 +2863,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                     <div
                       key={u}
                       onClick={() => setInspectingUser(u)}
-                      className="group/member w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-[#2a3942] transition-colors text-left cursor-pointer opacity-50 hover:opacity-100"
+                      className="chat-participant-row group/member w-full flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-[#2a3942] transition-colors text-left cursor-pointer opacity-50 hover:opacity-100"
                     >
                       <div className="relative shrink-0">
                         {renderAvatar(u, 'h-8 w-8')}
@@ -2904,7 +2904,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
           {/* GROUP SHORTCUT */}
           {activeGroup && (
-            <div className="border-t border-slate-800 p-3">
+            <div className="chat-participants-footer border-t border-slate-800 p-3">
               <button
                 onClick={() => {
                   setGroupNameDraft(activeGroup.name);
@@ -2960,7 +2960,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl relative text-slate-100 max-h-[85vh] overflow-y-auto"
+            className="chat-dialog w-full max-w-sm rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl relative text-slate-100 max-h-[85vh] overflow-y-auto"
           >
             <button
               onClick={() => setShowSettingsModal(false)}
@@ -3036,7 +3036,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl relative text-slate-100"
+            className="chat-dialog w-full max-w-sm rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl relative text-slate-100"
           >
             <button
               onClick={() => setShowGrantBadgeModal(false)}
@@ -3158,7 +3158,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-xs rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl text-center relative"
+            className="chat-dialog w-full max-w-xs rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl text-center relative"
           >
             <div className="flex justify-center mb-3">
               {renderAvatar(inspectingUser, 'h-16 w-16')}
@@ -3216,7 +3216,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-sm rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl"
+            className="chat-dialog w-full max-w-sm rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl"
           >
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
@@ -3278,7 +3278,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           <form
             onClick={(e) => e.stopPropagation()}
             onSubmit={handleCreateGroup}
-            className="w-full max-w-md rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl flex flex-col max-h-[88vh]"
+            className="chat-dialog w-full max-w-md rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl flex flex-col max-h-[88vh]"
           >
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">
@@ -3418,7 +3418,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl flex flex-col max-h-[88vh]"
+            className="chat-dialog w-full max-w-md rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl flex flex-col max-h-[88vh]"
           >
             <div className="flex items-center justify-between mb-4">
               <div className="flex items-center gap-2">

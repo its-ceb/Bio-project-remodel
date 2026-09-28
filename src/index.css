@@ -80,6 +80,223 @@
   }
 }
 
+@layer components {
+  /* ----------------------------------------------------------------------
+     SecretChat: liquid-glass visual system
+     Scoped to chat so the study dashboard's light/dark themes remain intact.
+     The blur is deliberately limited to the large surfaces and message cards,
+     which keeps the effect smooth on mid-range phones.                         */
+  .secret-chat.chat-liquid {
+    color-scheme: dark;
+    isolation: isolate;
+    background:
+      radial-gradient(circle at 7% 4%, rgb(45 212 191 / 0.16), transparent 27rem),
+      radial-gradient(circle at 93% 8%, rgb(96 165 250 / 0.15), transparent 30rem),
+      radial-gradient(circle at 52% 110%, rgb(139 92 246 / 0.14), transparent 33rem),
+      linear-gradient(135deg, #07111f 0%, #0a1726 45%, #111126 100%);
+  }
+
+  .secret-chat.chat-liquid .chat-sidebar,
+  .secret-chat.chat-liquid .chat-participants {
+    background: rgb(11 24 41 / 0.72);
+    border-color: rgb(148 163 184 / 0.16);
+    box-shadow: inset -1px 0 0 rgb(255 255 255 / 0.035), 18px 0 42px rgb(2 6 23 / 0.13);
+    -webkit-backdrop-filter: blur(22px) saturate(145%);
+    backdrop-filter: blur(22px) saturate(145%);
+  }
+
+  .secret-chat.chat-liquid .chat-main {
+    background: transparent;
+  }
+
+  .secret-chat.chat-liquid .chat-header,
+  .secret-chat.chat-liquid .chat-sidebar-header,
+  .secret-chat.chat-liquid .chat-sidebar-footer,
+  .secret-chat.chat-liquid .chat-participants-header,
+  .secret-chat.chat-liquid .chat-composer {
+    background: rgb(14 29 48 / 0.64);
+    border-color: rgb(148 163 184 / 0.17);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+    backdrop-filter: blur(18px) saturate(150%);
+  }
+
+  .secret-chat.chat-liquid .chat-message-scroll {
+    background:
+      radial-gradient(circle at 50% -8%, rgb(20 184 166 / 0.08), transparent 26rem),
+      linear-gradient(180deg, rgb(7 17 31 / 0.18), rgb(15 23 42 / 0.08));
+  }
+
+  .secret-chat.chat-liquid .chat-section-header {
+    color: rgb(148 163 184 / 0.9);
+  }
+
+  .secret-chat.chat-liquid .chat-channel-row,
+  .secret-chat.chat-liquid .chat-participant-row {
+    border: 1px solid transparent;
+    background: transparent;
+  }
+
+  .secret-chat.chat-liquid .chat-channel-row:hover,
+  .secret-chat.chat-liquid .chat-participant-row:hover {
+    background: rgb(71 85 105 / 0.2);
+    border-color: rgb(191 219 254 / 0.1);
+  }
+
+  .secret-chat.chat-liquid .chat-channel-row-active {
+    background: linear-gradient(100deg, rgb(20 184 166 / 0.22), rgb(59 130 246 / 0.16));
+    border-color: rgb(94 234 212 / 0.2);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.055), 0 5px 14px rgb(2 6 23 / 0.1);
+  }
+
+  .secret-chat.chat-liquid .chat-participants-footer {
+    background: rgb(14 29 48 / 0.42);
+    border-color: rgb(148 163 184 / 0.15);
+  }
+
+  .secret-chat.chat-liquid .chat-pin-banner,
+  .secret-chat.chat-liquid .chat-date-pill {
+    background: rgb(20 43 61 / 0.62);
+    border-color: rgb(94 234 212 / 0.18);
+    -webkit-backdrop-filter: blur(14px) saturate(145%);
+    backdrop-filter: blur(14px) saturate(145%);
+  }
+
+  .secret-chat.chat-liquid .chat-date-pill {
+    border: 1px solid rgb(148 163 184 / 0.16);
+    color: rgb(203 213 225 / 0.9);
+  }
+
+  .secret-chat.chat-liquid .chat-bubble {
+    border: 1px solid rgb(255 255 255 / 0.105);
+    box-shadow: 0 10px 30px rgb(2 6 23 / 0.18), inset 0 1px 0 rgb(255 255 255 / 0.06);
+    -webkit-backdrop-filter: blur(14px) saturate(150%);
+    backdrop-filter: blur(14px) saturate(150%);
+  }
+
+  .secret-chat.chat-liquid .chat-bubble-self {
+    background: linear-gradient(135deg, rgb(6 138 116 / 0.76), rgb(11 104 139 / 0.68));
+    border-color: rgb(94 234 212 / 0.27);
+  }
+
+  .secret-chat.chat-liquid .chat-bubble-other {
+    background: linear-gradient(135deg, rgb(30 41 59 / 0.72), rgb(30 50 75 / 0.57));
+    border-color: rgb(191 219 254 / 0.14);
+  }
+
+  /* Media has a single hairline frame, no opaque picture card, and preserves
+     the full attachment with object-contain instead of cropping it. */
+  .secret-chat.chat-liquid .chat-media-frame {
+    border: 1px solid rgb(255 255 255 / 0.13);
+    background: rgb(2 6 23 / 0.28);
+    box-shadow: 0 8px 20px rgb(2 6 23 / 0.16);
+  }
+
+  .secret-chat.chat-liquid .chat-media-frame img {
+    display: block;
+  }
+
+  .secret-chat.chat-liquid .chat-composer-action,
+  .secret-chat.chat-liquid .chat-composer-input {
+    background: rgb(30 51 74 / 0.62);
+    border: 1px solid rgb(191 219 254 / 0.11);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
+
+  .secret-chat.chat-liquid .chat-composer-action:hover {
+    background: rgb(49 74 100 / 0.72);
+    border-color: rgb(94 234 212 / 0.35);
+  }
+
+  .secret-chat.chat-liquid .chat-composer-input:focus {
+    border-color: rgb(94 234 212 / 0.62);
+    box-shadow: 0 0 0 3px rgb(45 212 191 / 0.11), inset 0 1px 0 rgb(255 255 255 / 0.05);
+  }
+
+  .secret-chat.chat-liquid .chat-send-button {
+    background: linear-gradient(135deg, #14b8a6, #0284c7);
+    border: 1px solid rgb(153 246 228 / 0.45);
+    box-shadow: 0 10px 24px rgb(13 148 136 / 0.22), inset 0 1px 0 rgb(255 255 255 / 0.22);
+  }
+
+  .secret-chat.chat-liquid .chat-send-button:hover {
+    background: linear-gradient(135deg, #2dd4bf, #0ea5e9);
+  }
+
+  .secret-chat.chat-liquid .chat-popover,
+  .secret-chat.chat-liquid .chat-auth-card {
+    background: rgb(15 31 51 / 0.82);
+    border-color: rgb(191 219 254 / 0.18);
+    box-shadow: 0 24px 64px rgb(2 6 23 / 0.42), inset 0 1px 0 rgb(255 255 255 / 0.07);
+    -webkit-backdrop-filter: blur(22px) saturate(150%);
+    backdrop-filter: blur(22px) saturate(150%);
+  }
+
+  .secret-chat.chat-liquid .chat-dialog,
+  .secret-chat.chat-liquid .klipy-gif-picker-panel {
+    background: rgb(15 31 51 / 0.86);
+    border-color: rgb(191 219 254 / 0.2);
+    box-shadow: 0 28px 72px rgb(2 6 23 / 0.48), inset 0 1px 0 rgb(255 255 255 / 0.08);
+    -webkit-backdrop-filter: blur(24px) saturate(155%);
+    backdrop-filter: blur(24px) saturate(155%);
+  }
+
+  .secret-chat.chat-liquid .chat-link-card {
+    background: rgb(3 12 25 / 0.34);
+    border-color: rgb(191 219 254 / 0.14);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.045);
+    -webkit-backdrop-filter: blur(10px) saturate(135%);
+    backdrop-filter: blur(10px) saturate(135%);
+  }
+
+  .secret-chat.chat-liquid ::selection {
+    background: rgb(45 212 191 / 0.38);
+    color: white;
+  }
+
+  @media (max-width: 767px) {
+    .secret-chat.chat-liquid .chat-sidebar,
+    .secret-chat.chat-liquid .chat-participants {
+      background: rgb(9 20 35 / 0.9);
+      -webkit-backdrop-filter: blur(16px) saturate(135%);
+      backdrop-filter: blur(16px) saturate(135%);
+    }
+
+    .secret-chat.chat-liquid .chat-bubble {
+      -webkit-backdrop-filter: blur(10px) saturate(135%);
+      backdrop-filter: blur(10px) saturate(135%);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce), (prefers-reduced-transparency: reduce) {
+    .secret-chat.chat-liquid *,
+    .secret-chat.chat-liquid *::before,
+    .secret-chat.chat-liquid *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+
+    .secret-chat.chat-liquid .chat-sidebar,
+    .secret-chat.chat-liquid .chat-participants,
+    .secret-chat.chat-liquid .chat-header,
+    .secret-chat.chat-liquid .chat-sidebar-header,
+    .secret-chat.chat-liquid .chat-sidebar-footer,
+    .secret-chat.chat-liquid .chat-participants-header,
+    .secret-chat.chat-liquid .chat-composer,
+    .secret-chat.chat-liquid .chat-bubble,
+    .secret-chat.chat-liquid .chat-popover,
+    .secret-chat.chat-liquid .chat-auth-card,
+    .secret-chat.chat-liquid .chat-dialog,
+    .secret-chat.chat-liquid .klipy-gif-picker-panel,
+    .secret-chat.chat-liquid .chat-link-card {
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+}
+
 @layer utilities {
   /* Shared dark-theme surface tokens. Components throughout the study portal
      use Tailwind's slate/white utilities, so these scoped overrides keep the

@@ -128,11 +128,11 @@ export default function KlipyGifPicker({ open, onClose, onSelect }: KlipyGifPick
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/75 p-3 backdrop-blur-sm sm:items-center sm:p-4"
+      className="klipy-gif-picker fixed inset-0 z-[70] flex items-end justify-center bg-slate-950/75 p-3 backdrop-blur-sm sm:items-center sm:p-4"
     >
       <div
         onClick={(event) => event.stopPropagation()}
-        className="flex max-h-[82vh] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-slate-700 bg-[#1f2c34] text-slate-100 shadow-2xl"
+        className="klipy-gif-picker-panel flex max-h-[82vh] w-full max-w-lg flex-col overflow-hidden rounded-3xl border border-slate-700 bg-[#1f2c34] text-slate-100 shadow-2xl"
       >
         <div className="flex items-center justify-between border-b border-slate-700 px-4 py-3">
           <div>

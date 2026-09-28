@@ -18,7 +18,7 @@ function OpenLink({ link, children }: { link: ChatLink; children: React.ReactNod
 function GenericLinkCard({ link }: { link: ChatLink }) {
   return (
     <OpenLink link={link}>
-      <span className="mt-2 flex max-w-full items-center gap-2 rounded-xl border border-slate-600/80 bg-slate-950/30 px-3 py-2 text-left no-underline transition-colors hover:border-emerald-500/70 hover:bg-slate-950/50">
+      <span className="chat-link-card mt-2 flex max-w-full items-center gap-2 rounded-xl border border-slate-600/80 bg-slate-950/30 px-3 py-2 text-left no-underline transition-colors hover:border-emerald-500/70 hover:bg-slate-950/50">
         <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-300">
           <ExternalLink className="h-4 w-4" />
         </span>
@@ -51,7 +51,7 @@ function MediaHeader({ link, label, icon }: { link: ChatLink; label: string; ico
 function ChatLinkCard({ link }: { link: ChatLink }) {
   if (link.kind === 'youtube' && link.embedUrl) {
     return (
-      <div className="mt-2 overflow-hidden rounded-xl border border-slate-600/80 bg-slate-950/50 shadow-sm">
+      <div className="chat-link-card mt-2 overflow-hidden rounded-xl border border-slate-600/80 bg-slate-950/50 shadow-sm">
         <MediaHeader link={link} label="YouTube video" icon={<Play className="h-3.5 w-3.5" />} />
         <div className="aspect-video bg-black">
           <iframe
@@ -69,7 +69,7 @@ function ChatLinkCard({ link }: { link: ChatLink }) {
 
   if (link.kind === 'instagram' && link.embedUrl) {
     return (
-      <div className="mt-2 overflow-hidden rounded-xl border border-slate-600/80 bg-slate-950/50 shadow-sm">
+      <div className="chat-link-card mt-2 overflow-hidden rounded-xl border border-slate-600/80 bg-slate-950/50 shadow-sm">
         <MediaHeader link={link} label="Instagram post / reel" icon={<Play className="h-3.5 w-3.5" />} />
         <div className="h-[430px] bg-slate-950">
           <iframe
@@ -94,7 +94,7 @@ function ChatLinkCard({ link }: { link: ChatLink }) {
 
   if (link.kind === 'gif') {
     return (
-      <div className="mt-2 overflow-hidden rounded-xl border border-slate-600/80 bg-slate-950/50 shadow-sm">
+      <div className="chat-link-card mt-2 overflow-hidden rounded-xl border border-slate-600/80 bg-slate-950/50 shadow-sm">
         <MediaHeader link={link} label="GIF" icon={<Film className="h-3.5 w-3.5" />} />
         <a href={link.url} target="_blank" rel="noreferrer noopener" className="block bg-black">
           <img src={link.url} alt="Shared GIF" loading="lazy" className="max-h-80 w-full object-contain" />
@@ -105,7 +105,7 @@ function ChatLinkCard({ link }: { link: ChatLink }) {
 
   if (link.kind === 'video') {
     return (
-      <div className="mt-2 overflow-hidden rounded-xl border border-slate-600/80 bg-slate-950/50 shadow-sm">
+      <div className="chat-link-card mt-2 overflow-hidden rounded-xl border border-slate-600/80 bg-slate-950/50 shadow-sm">
         <MediaHeader link={link} label="Video" icon={<Play className="h-3.5 w-3.5" />} />
         <video controls preload="metadata" className="max-h-80 w-full bg-black" src={link.url}>
           Your browser cannot play this video.
