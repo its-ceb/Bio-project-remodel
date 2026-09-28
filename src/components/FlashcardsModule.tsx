@@ -15,20 +15,19 @@ import {
 import { flashcards, type Flashcard, type UnitId } from '@/data/biology';
 import {
   generateFlashcards,
-  describeGeminiError,
-  hasGeminiApiKey,
+  describeAiError,
+  isAiServiceConfigured,
   readAiCache,
   writeAiCache,
   clearAiCache,
-  UNIT_IDS,
 } from '@/lib/gemini';
 
 interface FlashcardsModuleProps {
   selectedUnit: UnitId | 'all';
 }
 
-/** How many cards one AI request produces. Bigger = fewer calls = fewer tokens. */
-const AI_BATCH_SIZE = 8;
+/** Smaller batches keep each free-tier AI generation within a modest token budget. */
+const AI_BATCH_SIZE = 4;
 
 /** Human names so the prompt can describe the unit properly. */
 const UNIT_NAMES: Record<UnitId, string> = {
@@ -145,7 +144,7 @@ export default function FlashcardsModule({ selectedUnit }: FlashcardsModuleProps
       setOrder((prev) => [...prev, ...stamped.map((_, i) => baseDeck.length + aiCards.length + i)]);
     } catch (err) {
       console.error('Flashcard generation failed:', err);
-      setAiError(describeGeminiError(err));
+      setAiError(describeAiError(err));
     } finally {
       setIsGenerating(false);
     }
@@ -346,9 +345,9 @@ export default function FlashcardsModule({ selectedUnit }: FlashcardsModuleProps
             </button>
           </div>
 
-          {!hasGeminiApiKey() && (
+          {!isAiServiceConfigured() && (
             <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-600">
-              <AlertTriangle className="h-3 w-3" /> No API key configured — add VITE_GEMINI_API_KEY first.
+              <AlertTriangle className="h-3 w-3" /> AI service not configured — add VITE_CLOUDFLARE_AI_URL first.
             </p>
           )}
 

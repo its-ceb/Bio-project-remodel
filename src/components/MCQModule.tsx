@@ -17,8 +17,8 @@ import {
 import { mcqs, type MCQ, type UnitId } from '@/data/biology';
 import {
   generateMCQs,
-  describeGeminiError,
-  hasGeminiApiKey,
+  describeAiError,
+  isAiServiceConfigured,
   readAiCache,
   writeAiCache,
   clearAiCache,
@@ -28,8 +28,8 @@ interface MCQModuleProps {
   selectedUnit: UnitId | 'all';
 }
 
-/** Questions per AI batch. One request = one batch, so keep it chunky. */
-const AI_BATCH_SIZE = 10;
+/** Smaller batches keep each free-tier AI generation within a modest token budget. */
+const AI_BATCH_SIZE = 5;
 const QUIZ_LENGTH = 10;
 
 const UNIT_NAMES: Record<UnitId, string> = {
@@ -152,7 +152,7 @@ export default function MCQModule({ selectedUnit }: MCQModuleProps) {
       setFinished(false);
     } catch (err) {
       console.error('MCQ generation failed:', err);
-      setAiError(describeGeminiError(err));
+      setAiError(describeAiError(err));
     } finally {
       setIsGenerating(false);
     }
@@ -454,9 +454,9 @@ function ScoreSummary({
                   )}
                 </div>
 
-                {!hasGeminiApiKey() && (
+                {!isAiServiceConfigured() && (
                   <p className="mt-2 flex items-center gap-1.5 text-[11px] text-amber-600">
-                    <AlertTriangle className="h-3 w-3" /> No API key configured — add VITE_GEMINI_API_KEY first.
+                    <AlertTriangle className="h-3 w-3" /> AI service not configured — add VITE_CLOUDFLARE_AI_URL first.
                   </p>
                 )}
 

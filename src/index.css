@@ -63,7 +63,657 @@
   }
 }
 
+@layer components {
+  .app-theme {
+    transition: background-color 180ms ease, color 180ms ease;
+  }
+
+  .app-theme.dark {
+    color-scheme: dark;
+    background-color: #0f172a;
+    color: #f8fafc;
+  }
+
+  .app-theme.dark .glass {
+    background-color: rgb(15 23 42 / 0.82);
+    border-color: rgb(51 65 85 / 0.9);
+  }
+}
+
+@layer components {
+  /* ----------------------------------------------------------------------
+     SecretChat: liquid-glass visual system
+     Scoped to chat so the study dashboard's light/dark themes remain intact.
+     The blur is deliberately limited to the large surfaces and message cards,
+     which keeps the effect smooth on mid-range phones.                         */
+  .secret-chat.chat-liquid {
+    color-scheme: dark;
+    isolation: isolate;
+    background:
+      radial-gradient(circle at 7% 4%, rgb(45 212 191 / 0.16), transparent 27rem),
+      radial-gradient(circle at 93% 8%, rgb(96 165 250 / 0.15), transparent 30rem),
+      radial-gradient(circle at 52% 110%, rgb(139 92 246 / 0.14), transparent 33rem),
+      linear-gradient(135deg, #07111f 0%, #0a1726 45%, #111126 100%);
+  }
+
+  .secret-chat.chat-liquid .chat-sidebar,
+  .secret-chat.chat-liquid .chat-participants {
+    background: rgb(11 24 41 / 0.72);
+    border-color: rgb(148 163 184 / 0.16);
+    box-shadow: inset -1px 0 0 rgb(255 255 255 / 0.035), 18px 0 42px rgb(2 6 23 / 0.13);
+    -webkit-backdrop-filter: blur(22px) saturate(145%);
+    backdrop-filter: blur(22px) saturate(145%);
+  }
+
+  .secret-chat.chat-liquid .chat-main {
+    background: transparent;
+  }
+
+  .secret-chat.chat-liquid .chat-header,
+  .secret-chat.chat-liquid .chat-sidebar-header,
+  .secret-chat.chat-liquid .chat-sidebar-footer,
+  .secret-chat.chat-liquid .chat-participants-header,
+  .secret-chat.chat-liquid .chat-composer {
+    background: rgb(14 29 48 / 0.64);
+    border-color: rgb(148 163 184 / 0.17);
+    -webkit-backdrop-filter: blur(18px) saturate(150%);
+    backdrop-filter: blur(18px) saturate(150%);
+  }
+
+  .secret-chat.chat-liquid .chat-message-scroll {
+    /* Pagination restores scrollTop itself; disable the browser's separate
+       scroll anchoring so a prepend cannot be compensated twice. */
+    overflow-anchor: none;
+    background:
+      radial-gradient(circle at 50% -8%, rgb(20 184 166 / 0.08), transparent 26rem),
+      linear-gradient(180deg, rgb(7 17 31 / 0.18), rgb(15 23 42 / 0.08));
+  }
+
+  .secret-chat.chat-liquid .chat-section-header {
+    color: rgb(148 163 184 / 0.9);
+  }
+
+  .secret-chat.chat-liquid .chat-channel-row,
+  .secret-chat.chat-liquid .chat-participant-row {
+    border: 1px solid transparent;
+    background: transparent;
+  }
+
+  .secret-chat.chat-liquid .chat-channel-row:hover,
+  .secret-chat.chat-liquid .chat-participant-row:hover {
+    background: rgb(71 85 105 / 0.2);
+    border-color: rgb(191 219 254 / 0.1);
+  }
+
+  .secret-chat.chat-liquid .chat-channel-row-active {
+    background: linear-gradient(100deg, rgb(20 184 166 / 0.22), rgb(59 130 246 / 0.16));
+    border-color: rgb(94 234 212 / 0.2);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.055), 0 5px 14px rgb(2 6 23 / 0.1);
+  }
+
+  .secret-chat.chat-liquid .chat-participants-footer {
+    background: rgb(14 29 48 / 0.42);
+    border-color: rgb(148 163 184 / 0.15);
+  }
+
+  .secret-chat.chat-liquid .chat-pin-banner,
+  .secret-chat.chat-liquid .chat-date-pill {
+    background: rgb(20 43 61 / 0.62);
+    border-color: rgb(94 234 212 / 0.18);
+    -webkit-backdrop-filter: blur(14px) saturate(145%);
+    backdrop-filter: blur(14px) saturate(145%);
+  }
+
+  .secret-chat.chat-liquid .chat-date-pill {
+    border: 1px solid rgb(148 163 184 / 0.16);
+    color: rgb(203 213 225 / 0.9);
+  }
+
+  .secret-chat.chat-liquid .chat-bubble {
+    border: 1px solid rgb(255 255 255 / 0.105);
+    box-shadow: 0 10px 30px rgb(2 6 23 / 0.18), inset 0 1px 0 rgb(255 255 255 / 0.06);
+    -webkit-backdrop-filter: blur(14px) saturate(150%);
+    backdrop-filter: blur(14px) saturate(150%);
+  }
+
+  .secret-chat.chat-liquid .chat-bubble-self {
+    background: linear-gradient(135deg, rgb(6 138 116 / 0.76), rgb(11 104 139 / 0.68));
+    border-color: rgb(94 234 212 / 0.27);
+  }
+
+  .secret-chat.chat-liquid .chat-bubble-other {
+    background: linear-gradient(135deg, rgb(30 41 59 / 0.72), rgb(30 50 75 / 0.57));
+    border-color: rgb(191 219 254 / 0.14);
+  }
+
+  /* Media has a single hairline frame, no opaque picture card, and preserves
+     the full attachment with object-contain instead of cropping it. */
+  .secret-chat.chat-liquid .chat-media-frame {
+    border: 1px solid rgb(255 255 255 / 0.13);
+    background: rgb(2 6 23 / 0.28);
+    box-shadow: 0 8px 20px rgb(2 6 23 / 0.16);
+  }
+
+  .secret-chat.chat-liquid .chat-media-frame img {
+    display: block;
+  }
+
+  .secret-chat.chat-liquid .chat-composer-action,
+  .secret-chat.chat-liquid .chat-composer-input {
+    background: rgb(30 51 74 / 0.62);
+    border: 1px solid rgb(191 219 254 / 0.11);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
+    -webkit-backdrop-filter: blur(12px);
+    backdrop-filter: blur(12px);
+  }
+
+  .secret-chat.chat-liquid .chat-composer-action:hover {
+    background: rgb(49 74 100 / 0.72);
+    border-color: rgb(94 234 212 / 0.35);
+  }
+
+  .secret-chat.chat-liquid .chat-composer-input:focus {
+    border-color: rgb(94 234 212 / 0.62);
+    box-shadow: 0 0 0 3px rgb(45 212 191 / 0.11), inset 0 1px 0 rgb(255 255 255 / 0.05);
+  }
+
+  .secret-chat.chat-liquid .chat-send-button {
+    background: linear-gradient(135deg, #14b8a6, #0284c7);
+    border: 1px solid rgb(153 246 228 / 0.45);
+    box-shadow: 0 10px 24px rgb(13 148 136 / 0.22), inset 0 1px 0 rgb(255 255 255 / 0.22);
+  }
+
+  .secret-chat.chat-liquid .chat-send-button:hover {
+    background: linear-gradient(135deg, #2dd4bf, #0ea5e9);
+  }
+
+  .secret-chat.chat-liquid .chat-popover,
+  .secret-chat.chat-liquid .chat-auth-card {
+    background: rgb(15 31 51 / 0.82);
+    border-color: rgb(191 219 254 / 0.18);
+    box-shadow: 0 24px 64px rgb(2 6 23 / 0.42), inset 0 1px 0 rgb(255 255 255 / 0.07);
+    -webkit-backdrop-filter: blur(22px) saturate(150%);
+    backdrop-filter: blur(22px) saturate(150%);
+  }
+
+  .secret-chat.chat-liquid .chat-dialog,
+  .secret-chat.chat-liquid .klipy-gif-picker-panel {
+    background: rgb(15 31 51 / 0.86);
+    border-color: rgb(191 219 254 / 0.2);
+    box-shadow: 0 28px 72px rgb(2 6 23 / 0.48), inset 0 1px 0 rgb(255 255 255 / 0.08);
+    -webkit-backdrop-filter: blur(24px) saturate(155%);
+    backdrop-filter: blur(24px) saturate(155%);
+  }
+
+  .secret-chat.chat-liquid .chat-link-card {
+    background: rgb(3 12 25 / 0.34);
+    border-color: rgb(191 219 254 / 0.14);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.045);
+    -webkit-backdrop-filter: blur(10px) saturate(135%);
+    backdrop-filter: blur(10px) saturate(135%);
+  }
+
+  /* The camera/device menu uses full-width button cards: taps on the
+     icon, label, helper text, or empty card space all trigger the source. */
+  .secret-chat.chat-liquid .chat-attachment-choice {
+    background: rgb(30 51 74 / 0.56);
+    border-color: rgb(191 219 254 / 0.16);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.045);
+  }
+
+  .secret-chat.chat-liquid .chat-attachment-choice:hover {
+    background: rgb(49 74 100 / 0.7);
+    border-color: rgb(94 234 212 / 0.46);
+  }
+
+  /* Profile surfaces: a restrained aurora treatment gives identity views
+     their own sense of place without adding imagery or heavy new layers. */
+  .secret-chat.chat-liquid .profile-editor-card,
+  .secret-chat.chat-liquid .profile-inspect-card {
+    background:
+      radial-gradient(circle at 88% 4%, rgb(45 212 191 / 0.14), transparent 13rem),
+      linear-gradient(145deg, rgb(19 38 61 / 0.94), rgb(11 25 43 / 0.94));
+    border-color: rgb(191 219 254 / 0.2);
+    box-shadow: 0 30px 78px rgb(2 6 23 / 0.52), inset 0 1px 0 rgb(255 255 255 / 0.09);
+    -webkit-backdrop-filter: blur(24px) saturate(155%);
+    backdrop-filter: blur(24px) saturate(155%);
+  }
+
+  .secret-chat.chat-liquid .profile-editor-hero,
+  .secret-chat.chat-liquid .profile-inspect-hero {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid rgb(191 219 254 / 0.14);
+    background:
+      radial-gradient(circle at 10% 14%, rgb(45 212 191 / 0.25), transparent 8rem),
+      radial-gradient(circle at 84% 5%, rgb(129 140 248 / 0.22), transparent 9rem),
+      linear-gradient(135deg, rgb(16 51 70 / 0.7), rgb(25 35 73 / 0.48));
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.085);
+  }
+
+  .secret-chat.chat-liquid .profile-editor-hero::after,
+  .secret-chat.chat-liquid .profile-inspect-hero::after {
+    content: '';
+    pointer-events: none;
+    position: absolute;
+    inset: 0;
+    opacity: 0.22;
+    background-image: linear-gradient(rgb(255 255 255 / 0.08) 1px, transparent 1px), linear-gradient(90deg, rgb(255 255 255 / 0.08) 1px, transparent 1px);
+    background-size: 18px 18px;
+    -webkit-mask-image: linear-gradient(to bottom, black, transparent 90%);
+    mask-image: linear-gradient(to bottom, black, transparent 90%);
+  }
+
+  .secret-chat.chat-liquid .profile-inspect-hero {
+    border-width: 0 0 1px;
+    border-radius: 0;
+  }
+
+  .secret-chat.chat-liquid .profile-editor-hero > :not(button),
+  .secret-chat.chat-liquid .profile-inspect-hero > :not(button) {
+    position: relative;
+    z-index: 1;
+  }
+
+  @keyframes secret-chat-avatar-ring {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+
+  @keyframes secret-chat-avatar-aura {
+    0%, 100% { opacity: 0.55; transform: scale(0.94); }
+    50% { opacity: 0.95; transform: scale(1.08); }
+  }
+
+  .secret-chat.chat-liquid .profile-avatar-aura {
+    position: relative;
+    display: grid;
+    place-items: center;
+    isolation: isolate;
+  }
+
+  .secret-chat.chat-liquid .profile-avatar-aura::before,
+  .secret-chat.chat-liquid .profile-avatar-aura::after {
+    content: '';
+    position: absolute;
+    border-radius: 9999px;
+    pointer-events: none;
+  }
+
+  .secret-chat.chat-liquid .profile-avatar-aura::before {
+    z-index: 0;
+    inset: -4px;
+    background: conic-gradient(from 15deg, #5eead4, #60a5fa, #a78bfa, #fb7185, #5eead4);
+    animation: secret-chat-avatar-ring 10s linear infinite;
+    box-shadow: 0 0 20px rgb(45 212 191 / 0.38);
+  }
+
+  .secret-chat.chat-liquid .profile-avatar-aura::after {
+    z-index: 0;
+    inset: -13px;
+    background: radial-gradient(circle, rgb(45 212 191 / 0.34), rgb(96 165 250 / 0.12) 42%, transparent 72%);
+    filter: blur(5px);
+    animation: secret-chat-avatar-aura 3.8s ease-in-out infinite;
+  }
+
+  .secret-chat.chat-liquid .profile-avatar-aura > img,
+  .secret-chat.chat-liquid .profile-avatar-aura > div {
+    position: relative;
+    z-index: 10;
+    box-shadow: 0 0 0 3px rgb(9 23 39 / 0.94);
+  }
+
+  .secret-chat.chat-liquid .profile-preview-card,
+  .secret-chat.chat-liquid .profile-bio-card,
+  .secret-chat.chat-liquid .profile-account-panel {
+    background: rgb(3 12 25 / 0.32);
+    border-color: rgb(191 219 254 / 0.13);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.045);
+  }
+
+  .secret-chat.chat-liquid .profile-upload-card {
+    background: rgb(30 51 74 / 0.52);
+    border-color: rgb(191 219 254 / 0.16);
+  }
+
+  .secret-chat.chat-liquid .profile-upload-card:hover {
+    background: rgb(44 71 97 / 0.7);
+    box-shadow: 0 8px 20px rgb(2 6 23 / 0.18);
+  }
+
+  .secret-chat.chat-liquid .profile-editor-card input:not([type='file']),
+  .secret-chat.chat-liquid .profile-editor-card textarea {
+    border-color: rgb(191 219 254 / 0.16);
+    background: rgb(15 34 54 / 0.62);
+    box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.035);
+  }
+
+  .secret-chat.chat-liquid .profile-editor-card input:not([type='file']):focus,
+  .secret-chat.chat-liquid .profile-editor-card textarea:focus {
+    border-color: rgb(94 234 212 / 0.6);
+    box-shadow: 0 0 0 3px rgb(45 212 191 / 0.1), inset 0 1px 0 rgb(255 255 255 / 0.05);
+  }
+
+  .secret-chat.chat-liquid .profile-save-button,
+  .secret-chat.chat-liquid .profile-inspect-message {
+    background: linear-gradient(135deg, #14b8a6, #0284c7);
+    border: 1px solid rgb(153 246 228 / 0.4);
+    box-shadow: 0 9px 22px rgb(13 148 136 / 0.2), inset 0 1px 0 rgb(255 255 255 / 0.2);
+    transition: transform 160ms ease, filter 160ms ease;
+  }
+
+  .secret-chat.chat-liquid .profile-save-button:hover,
+  .secret-chat.chat-liquid .profile-inspect-message:hover {
+    filter: brightness(1.09);
+    transform: translateY(-1px);
+  }
+
+  .secret-chat.chat-liquid .profile-cancel-button,
+  .secret-chat.chat-liquid .profile-inspect-secondary {
+    border: 1px solid rgb(191 219 254 / 0.14);
+    background: rgb(51 65 85 / 0.52);
+    transition: background-color 160ms ease, transform 160ms ease;
+  }
+
+  .secret-chat.chat-liquid .profile-cancel-button:hover,
+  .secret-chat.chat-liquid .profile-inspect-secondary:hover {
+    background: rgb(71 85 105 / 0.68);
+    transform: translateY(-1px);
+  }
+
+  /* Motion stays short and transform/opacity-only so scrolling remains cheap.
+     Message popups are portalled to document.body, hence their selectors are
+     deliberately not nested under .secret-chat. */
+  @keyframes secret-chat-popover-in {
+    from {
+      opacity: 0;
+      transform: translateY(-6px) scale(0.96);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  @keyframes secret-chat-popover-side-in {
+    from {
+      opacity: 0;
+      transform: translateX(6px) scale(0.97);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+  }
+
+  @keyframes secret-chat-reaction-grid-in {
+    from {
+      opacity: 0;
+      transform: translateY(-5px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes secret-chat-reaction-pulse {
+    0% { transform: scale(0.82); }
+    58% { transform: scale(1.16); }
+    100% { transform: scale(1); }
+  }
+
+  @keyframes secret-chat-panel-in {
+    from {
+      opacity: 0;
+      transform: translateX(18px);
+    }
+    to {
+      opacity: 1;
+      transform: translateX(0);
+    }
+  }
+
+  @keyframes secret-chat-panel-out {
+    from {
+      opacity: 1;
+      transform: translateX(0);
+    }
+    to {
+      opacity: 0;
+      transform: translateX(18px);
+    }
+  }
+
+  .chat-popup-enter {
+    animation: secret-chat-popover-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    transform-origin: top center;
+  }
+
+  .secret-chat.chat-liquid .chat-channel-dropdown {
+    animation: secret-chat-popover-side-in 160ms cubic-bezier(0.22, 1, 0.36, 1) both;
+    transform-origin: top right;
+  }
+
+  .secret-chat.chat-liquid .chat-reaction-grid {
+    animation: secret-chat-reaction-grid-in 150ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .chat-reaction-option,
+  .chat-reaction-toggle {
+    transition: transform 130ms ease, background-color 130ms ease, box-shadow 130ms ease;
+  }
+
+  .chat-reaction-option:active,
+  .chat-reaction-toggle:active {
+    transform: scale(0.86);
+  }
+
+  .chat-reaction-toggle svg {
+    transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  .chat-reaction-toggle-open svg {
+    transform: rotate(90deg);
+  }
+
+  .secret-chat.chat-liquid .chat-reaction-pill-pulse {
+    animation: secret-chat-reaction-pulse 250ms cubic-bezier(0.22, 1.35, 0.36, 1);
+  }
+
+  .secret-chat.chat-liquid .chat-participants-opening {
+    animation: secret-chat-panel-in 220ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .secret-chat.chat-liquid .chat-participants-closing {
+    animation: secret-chat-panel-out 210ms cubic-bezier(0.4, 0, 1, 1) both;
+    pointer-events: none;
+  }
+
+  .secret-chat.chat-liquid ::selection {
+    background: rgb(45 212 191 / 0.38);
+    color: white;
+  }
+
+  @media (max-width: 767px) {
+    .secret-chat.chat-liquid .chat-sidebar,
+    .secret-chat.chat-liquid .chat-participants {
+      background: rgb(9 20 35 / 0.9);
+      -webkit-backdrop-filter: blur(16px) saturate(135%);
+      backdrop-filter: blur(16px) saturate(135%);
+    }
+
+    .secret-chat.chat-liquid .chat-bubble {
+      -webkit-backdrop-filter: blur(10px) saturate(135%);
+      backdrop-filter: blur(10px) saturate(135%);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce), (prefers-reduced-transparency: reduce) {
+    .secret-chat.chat-liquid *,
+    .secret-chat.chat-liquid *::before,
+    .secret-chat.chat-liquid *::after,
+    .chat-popup-enter,
+    .chat-reaction-option,
+    .chat-reaction-toggle {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+
+    .secret-chat.chat-liquid .chat-sidebar,
+    .secret-chat.chat-liquid .chat-participants,
+    .secret-chat.chat-liquid .chat-header,
+    .secret-chat.chat-liquid .chat-sidebar-header,
+    .secret-chat.chat-liquid .chat-sidebar-footer,
+    .secret-chat.chat-liquid .chat-participants-header,
+    .secret-chat.chat-liquid .chat-composer,
+    .secret-chat.chat-liquid .chat-bubble,
+    .secret-chat.chat-liquid .chat-popover,
+    .secret-chat.chat-liquid .chat-auth-card,
+    .secret-chat.chat-liquid .chat-dialog,
+    .secret-chat.chat-liquid .klipy-gif-picker-panel,
+    .secret-chat.chat-liquid .chat-link-card,
+    .secret-chat.chat-liquid .profile-editor-card,
+    .secret-chat.chat-liquid .profile-inspect-card {
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+    }
+  }
+}
+
 @layer utilities {
+  /* Shared dark-theme surface tokens. Components throughout the study portal
+     use Tailwind's slate/white utilities, so these scoped overrides keep the
+     theme coherent without affecting the deliberately dark Secret Chat. */
+  .app-theme.dark.bg-slate-50,
+  .app-theme.dark .bg-slate-50 {
+    background-color: #0f172a;
+  }
+
+  .app-theme.dark .bg-white,
+  .app-theme.dark .bg-white\/50,
+  .app-theme.dark .bg-white\/80 {
+    background-color: #182334;
+  }
+
+  .app-theme.dark .bg-slate-100,
+  .app-theme.dark .bg-slate-50\/50 {
+    background-color: #1e293b;
+  }
+
+  .app-theme.dark .bg-slate-200 {
+    background-color: #334155;
+  }
+
+  .app-theme.dark .bg-slate-300 {
+    background-color: #475569;
+  }
+
+  .app-theme.dark .bg-emerald-50,
+  .app-theme.dark .bg-emerald-50\/50,
+  .app-theme.dark .bg-teal-50 {
+    background-color: rgb(6 78 59 / 0.5);
+  }
+
+  .app-theme.dark .bg-violet-50 {
+    background-color: rgb(76 29 149 / 0.28);
+  }
+
+  .app-theme.dark .bg-red-50 {
+    background-color: rgb(127 29 29 / 0.3);
+  }
+
+  .app-theme.dark .bg-amber-50 {
+    background-color: rgb(120 53 15 / 0.3);
+  }
+
+  .app-theme.dark .border-slate-100,
+  .app-theme.dark .border-slate-200,
+  .app-theme.dark .border-slate-200\/70,
+  .app-theme.dark .border-slate-300 {
+    border-color: #334155;
+  }
+
+  .app-theme.dark .border-white\/60 {
+    border-color: rgb(71 85 105 / 0.9);
+  }
+
+  .app-theme.dark .border-emerald-100,
+  .app-theme.dark .border-emerald-200 {
+    border-color: rgb(16 185 129 / 0.32);
+  }
+
+  .app-theme.dark .text-slate-900,
+  .app-theme.dark .text-slate-800 {
+    color: #f8fafc;
+  }
+
+  .app-theme.dark .text-slate-700 {
+    color: #e2e8f0;
+  }
+
+  .app-theme.dark .text-slate-600 {
+    color: #cbd5e1;
+  }
+
+  .app-theme.dark .text-slate-500,
+  .app-theme.dark .text-slate-400 {
+    color: #94a3b8;
+  }
+
+  .app-theme.dark .text-slate-300 {
+    color: #cbd5e1;
+  }
+
+  .app-theme.dark .text-emerald-800,
+  .app-theme.dark .text-emerald-700,
+  .app-theme.dark .text-teal-700 {
+    color: #86efac;
+  }
+
+  .app-theme.dark .from-emerald-50 {
+    --tw-gradient-from: #064e3b var(--tw-gradient-from-position);
+    --tw-gradient-to: rgb(6 78 59 / 0) var(--tw-gradient-to-position);
+  }
+
+  .app-theme.dark .to-teal-50 {
+    --tw-gradient-to: #134e4a var(--tw-gradient-to-position);
+  }
+
+  .app-theme.dark .from-violet-50 {
+    --tw-gradient-from: #2e1065 var(--tw-gradient-from-position);
+    --tw-gradient-to: rgb(46 16 101 / 0) var(--tw-gradient-to-position);
+  }
+
+  .app-theme.dark .to-white {
+    --tw-gradient-to: #182334 var(--tw-gradient-to-position);
+  }
+
+  .app-theme.dark .hover\:bg-slate-100:hover,
+  .app-theme.dark .hover\:bg-slate-50:hover {
+    background-color: #334155;
+  }
+
+  .app-theme.dark .hover\:bg-emerald-50:hover,
+  .app-theme.dark .hover\:bg-emerald-50\/50:hover {
+    background-color: rgb(6 78 59 / 0.8);
+  }
+
+  .app-theme.dark .hover\:text-slate-600:hover {
+    color: #f8fafc;
+  }
+
+  /* Prevent Safari from zooming into compact chat fields while preserving
+     the desktop type scale. */
+  @media (max-width: 767px) {
+    .secret-chat input,
+    .secret-chat textarea,
+    .secret-chat select {
+      font-size: 16px;
+    }
+  }
+
   .animate-shake {
     animation: shake 0.4s cubic-bezier(0.36, 0.07, 0.19, 0.97) both;
   }
