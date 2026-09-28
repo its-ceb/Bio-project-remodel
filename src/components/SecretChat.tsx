@@ -68,6 +68,15 @@ const UNREAD_GREEN = '#25d366';
 /* Reactions (Instagram style)                                        */
 /* ------------------------------------------------------------------ */
 const QUICK_REACTIONS = ['❤️', '😂', '😮', '😢', '🔥', '👍'];
+// The expand button reveals a familiar, keyboard-free emoji grid. Keep these
+// as Firebase-safe emoji strings: they are used as reaction keys in the DB.
+const MORE_REACTIONS = [
+  '👍', '👎', '👏', '🙌', '🙏', '💯', '✅', '❌', '💀', '🥳',
+  '😍', '🥰', '😘', '😎', '🤩', '🥹', '😭', '😡', '🤔', '🤯',
+  '😴', '👀', '🤡', '🫡', '🤝', '💪', '🫶', '👌', '✌️', '🤞',
+  '☝️', '🫰', '👋', '🚀', '⭐', '✨', '💖', '💕', '💔', '🎂',
+  '🎁', '🏆', '🍀', '🌟', '📚', '🧬', '🎮', '⚽', '🍕', '☕',
+];
 const DOUBLE_TAP_REACTION = '❤️';
 
 /* ------------------------------------------------------------------ */
@@ -189,8 +198,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const [activeMessageMenuId, setActiveMessageMenuId] = useState<string | null>(null);
   // Emoji reaction picker state
   const [activeReactionPickerId, setActiveReactionPickerId] = useState<string | null>(null);
-  const [reactionEmojiInput, setReactionEmojiInput] = useState('');
-  const [reactionInputError, setReactionInputError] = useState('');
+  const [showMoreReactionEmojis, setShowMoreReactionEmojis] = useState(false);
   // Actions revealed by tapping / long-pressing a message (phones). On desktop
   // the buttons simply appear on hover.
   const [actionsVisibleId, setActionsVisibleId] = useState<string | null>(null);
@@ -408,7 +416,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     }
     const rect = el.getBoundingClientRect();
     const width = anchor.kind === 'picker' ? Math.min(288, window.innerWidth - 16) : 176;
-    const height = anchor.kind === 'picker' ? 132 : 250;
+    const height = anchor.kind === 'picker' ? (showMoreReactionEmojis ? 310 : 52) : 250;
     const openUp = window.innerHeight - rect.bottom < height + 16;
 
     let left = rect.left;
@@ -433,7 +441,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     popupAnchorRef.current = { el, kind };
     updatePopupPos();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeMessageMenuId, activeReactionPickerId]);
+  }, [activeMessageMenuId, activeReactionPickerId, showMoreReactionEmojis]);
 
   // Stay glued to the button while the list scrolls or the window resizes
   useEffect(() => {
@@ -451,6 +459,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const closeMessagePopup = () => {
     setActiveMessageMenuId(null);
     setActiveReactionPickerId(null);
+    setShowMoreReactionEmojis(false);
   };
 
   const openMessageMenu = (msg: ChatMessage) => {
@@ -459,6 +468,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       return;
     }
     setActiveReactionPickerId(null);
+    setShowMoreReactionEmojis(false);
     setActiveMessageMenuId(msg.id);
     setActionsVisibleId(msg.id);
   };
@@ -469,8 +479,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       return;
     }
     setActiveMessageMenuId(null);
-    setReactionEmojiInput('');
-    setReactionInputError('');
+    setShowMoreReactionEmojis(false);
     setActiveReactionPickerId(msg.id);
     setActionsVisibleId(msg.id);
   };
@@ -880,12 +889,6 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   /* ------------------------------------------------------------------ */
   /* REACTIONS                                                          */
   /* ------------------------------------------------------------------ */
-  const isSafeReactionEmoji = (emoji: string) =>
-    emoji.length > 0 &&
-    emoji.length <= 32 &&
-    /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}]/u.test(emoji) &&
-    !['.', '#', '$', '[', ']', '/'].some((reserved) => emoji.includes(reserved));
-
   const toggleReaction = async (msg: ChatMessage, emoji: string, keepPickerOpen = false) => {
     if (!currentUser) return;
 
@@ -911,18 +914,6 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     }
 
     if (!keepPickerOpen) setActiveReactionPickerId(null);
-  };
-
-  const addCustomReactions = async (msg: ChatMessage) => {
-    const emojis = Array.from(new Set(reactionEmojiInput.trim().split(/\s+/).filter(isSafeReactionEmoji))).slice(0, 6);
-    if (emojis.length === 0) {
-      setReactionInputError('Enter an emoji from your keyboard. Separate multiple emojis with spaces.');
-      return;
-    }
-
-    await Promise.all(emojis.map((emoji) => toggleReaction(msg, emoji, true)));
-    setReactionEmojiInput('');
-    setReactionInputError('');
   };
 
   const buzz = (ms: number) => {
@@ -1608,7 +1599,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         }}
       >
         {activeReactionPickerId ? (
-          /* Instagram-style reaction picker: quick reactions plus emoji-keyboard input. */
+          /* Instagram-style quick reactions with an expandable popular-emoji tray. */
           <div className="w-[min(18rem,calc(100vw-1rem))] rounded-2xl border border-slate-700 bg-[#1f2c34] p-2 shadow-2xl">
             <div className="flex items-center justify-between gap-0.5">
               {QUICK_REACTIONS.map((emoji) => {
@@ -1627,39 +1618,37 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                   </button>
                 );
               })}
-            </div>
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                void addCustomReactions(msg);
-              }}
-              className="mt-2 flex items-center gap-1.5"
-            >
-              <input
-                type="text"
-                value={reactionEmojiInput}
-                onChange={(event) => {
-                  setReactionEmojiInput(event.target.value);
-                  setReactionInputError('');
-                }}
-                maxLength={96}
-                aria-label="Add emoji reactions"
-                placeholder="Add emoji(s): 🎉 🤯"
-                className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-[#111b21] px-2 py-1.5 text-sm text-white placeholder:text-[11px] placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
-              />
               <button
-                type="submit"
-                title="Add typed emoji reactions"
-                aria-label="Add typed emoji reactions"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white transition-colors hover:bg-emerald-500"
+                type="button"
+                onClick={() => setShowMoreReactionEmojis((visible) => !visible)}
+                title={showMoreReactionEmojis ? 'Hide more reactions' : 'Show more reactions'}
+                aria-label={showMoreReactionEmojis ? 'Hide more reactions' : 'Show more reactions'}
+                aria-expanded={showMoreReactionEmojis}
+                className="flex h-8 w-8 items-center justify-center rounded-full text-slate-300 transition-colors hover:bg-slate-700 hover:text-white"
               >
-                <Plus className="h-4 w-4" />
+                {showMoreReactionEmojis ? <X className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
               </button>
-            </form>
-            {reactionInputError ? (
-              <p className="mt-1.5 text-[10px] text-amber-300">{reactionInputError}</p>
-            ) : (
-              <p className="mt-1.5 text-[10px] text-slate-400">Use your emoji keyboard. Separate multiple reactions with spaces.</p>
+            </div>
+
+            {showMoreReactionEmojis && (
+              <div className="mt-2 grid grid-cols-8 gap-1 border-t border-slate-700/70 pt-2">
+                {MORE_REACTIONS.map((emoji) => {
+                  const mine = myReactions.includes(emoji);
+                  return (
+                    <button
+                      key={emoji}
+                      type="button"
+                      onClick={() => toggleReaction(msg, emoji, true)}
+                      title={mine ? `Remove ${emoji}` : `React ${emoji}`}
+                      className={`flex h-7 w-7 items-center justify-center rounded-lg text-sm leading-none transition-transform hover:scale-110 active:scale-95 ${
+                        mine ? 'bg-emerald-600/30 ring-1 ring-emerald-500/60' : 'hover:bg-slate-700'
+                      }`}
+                    >
+                      {emoji}
+                    </button>
+                  );
+                })}
+              </div>
             )}
           </div>
         ) : (
