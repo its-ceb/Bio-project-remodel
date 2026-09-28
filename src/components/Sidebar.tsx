@@ -12,6 +12,8 @@ import {
   X,
   GraduationCap,
   Sparkles,
+  Moon,
+  Sun,
 } from 'lucide-react';
 import { units, type UnitId } from '@/data/biology';
 import type { LucideIcon } from 'lucide-react';
@@ -23,6 +25,8 @@ interface SidebarProps {
   onTabChange: (tab: TabId) => void;
   selectedUnit: UnitId | 'all';
   onUnitChange: (unit: UnitId | 'all') => void;
+  isDarkMode: boolean;
+  onToggleDarkMode: () => void;
 }
 
 const tabItems: { id: TabId; label: string; icon: LucideIcon }[] = [
@@ -39,7 +43,14 @@ const unitIcons: Record<UnitId, LucideIcon> = {
   human: HeartPulse,
 };
 
-export default function Sidebar({ activeTab, onTabChange, selectedUnit, onUnitChange }: SidebarProps) {
+export default function Sidebar({
+  activeTab,
+  onTabChange,
+  selectedUnit,
+  onUnitChange,
+  isDarkMode,
+  onToggleDarkMode,
+}: SidebarProps) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [unitDropdownOpen, setUnitDropdownOpen] = useState(false);
 
@@ -148,6 +159,41 @@ export default function Sidebar({ activeTab, onTabChange, selectedUnit, onUnitCh
             </div>
           )}
         </div>
+      </div>
+
+      {/* Appearance */}
+      <div className="px-3 pt-6">
+        <p className="px-3 pb-2 text-[11px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+          Appearance
+        </p>
+        <button
+          type="button"
+          onClick={onToggleDarkMode}
+          aria-pressed={isDarkMode}
+          className="flex w-full items-center gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-left text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:border-emerald-300 hover:bg-emerald-50/50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100 dark:hover:border-emerald-500/60 dark:hover:bg-emerald-500/10"
+        >
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-amber-300">
+            {isDarkMode ? <Moon className="h-4 w-4" /> : <Sun className="h-4 w-4" />}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block">Dark mode</span>
+            <span className="block text-[10px] font-medium text-slate-400 dark:text-slate-400">
+              {isDarkMode ? 'On' : 'Off'}
+            </span>
+          </span>
+          <span
+            aria-hidden="true"
+            className={`flex h-5 w-9 shrink-0 items-center rounded-full p-0.5 transition-colors ${
+              isDarkMode ? 'bg-emerald-500' : 'bg-slate-200 dark:bg-slate-600'
+            }`}
+          >
+            <span
+              className={`h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                isDarkMode ? 'translate-x-4' : 'translate-x-0'
+              }`}
+            />
+          </span>
+        </button>
       </div>
 
       {/* Footer */}
