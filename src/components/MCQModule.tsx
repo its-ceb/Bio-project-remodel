@@ -28,8 +28,8 @@ interface MCQModuleProps {
   selectedUnit: UnitId | 'all';
 }
 
-/** Questions per AI batch. One request = one batch, so keep it chunky. */
-const AI_BATCH_SIZE = 10;
+/** Smaller batches keep each free-tier AI generation within a modest token budget. */
+const AI_BATCH_SIZE = 5;
 const QUIZ_LENGTH = 10;
 
 const UNIT_NAMES: Record<UnitId, string> = {

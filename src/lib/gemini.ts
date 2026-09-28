@@ -26,8 +26,18 @@ export const GEMINI_MODELS = {
 const API_ROOT = 'https://generativelanguage.googleapis.com/v1beta/models';
 const REQUEST_TIMEOUT_MS = 45000;
 const MAX_RETRIES = 2;
-const RETRYABLE_STATUSES = [429, 500, 502, 503, 504];
+// A 429 means the account quota is exhausted or requests are arriving too
+// quickly. Retrying immediately just spends another request without helping.
+const RETRYABLE_STATUSES = [500, 502, 503, 504];
 const RETRY_BASE_DELAY_MS = 700;
+
+/* Free-tier saver settings. Keep 3.6 Flash, but use compact requests so the
+   tutor, flashcards and MCQs stretch a limited quota much further. */
+const FREE_TIER_HISTORY_TURNS = 4;
+const FREE_TIER_CHAT_OUTPUT_TOKENS = 700;
+const FREE_TIER_GENERATION_OUTPUT_TOKENS = 1600;
+const RATE_LIMIT_COOLDOWN_MS = 60_000;
+const RATE_LIMIT_COOLDOWN_STORAGE = 'neetbio-ai-rate-limit-until';
 
 /** localStorage key that lets you drop in a key without rebuilding.
  *  e.g. in the browser console:
@@ -176,6 +186,34 @@ interface CallGeminiOptions {
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+function getRateLimitCooldownRemaining(): number {
+  try {
+    const until = Number(localStorage.getItem(RATE_LIMIT_COOLDOWN_STORAGE) || 0);
+    return Math.max(0, until - Date.now());
+  } catch {
+    return 0;
+  }
+}
+
+function startRateLimitCooldown(): void {
+  try {
+    localStorage.setItem(RATE_LIMIT_COOLDOWN_STORAGE, String(Date.now() + RATE_LIMIT_COOLDOWN_MS));
+  } catch {
+    /* storage unavailable — the API response still reaches the user */
+  }
+}
+
+function throwIfRateLimited(): void {
+  const remaining = getRateLimitCooldownRemaining();
+  if (remaining <= 0) return;
+
+  const seconds = Math.ceil(remaining / 1000);
+  throw new GeminiError('rate-limit', `AI requests are paused for ${seconds} more seconds.`, {
+    status: 429,
+    hint: 'Your Gemini free-tier quota was recently rate limited. Wait for the timer before trying again.',
+  });
+}
+
 function extractText(data: any): string {
   const blockReason = data?.promptFeedback?.blockReason;
   if (blockReason) {
@@ -223,6 +261,8 @@ async function callGemini(options: CallGeminiOptions): Promise<string> {
         'environment variables, then rebuild. Or set localStorage.gemini_api_key for a quick test.',
     });
   }
+
+  throwIfRateLimited();
 
   const model = options.model ?? GEMINI_MODELS.chat;
   const url = `${API_ROOT}/${model}:generateContent`;
@@ -279,6 +319,16 @@ async function callGemini(options: CallGeminiOptions): Promise<string> {
 
       const apiError = classifyHttpError(response.status, apiMessage);
 
+      if (response.status === 429) {
+        startRateLimitCooldown();
+        throw new GeminiError('rate-limit', apiError.message, {
+          status: 429,
+          hint:
+            'Gemini has rate-limited this free-tier key. The app will wait 60 seconds before allowing another request. ' +
+            'If Google still reports a quota limit after that, wait for its quota reset or enable billing.',
+        });
+      }
+
       if (RETRYABLE_STATUSES.includes(response.status) && attempt < MAX_RETRIES) {
         lastError = apiError;
         await delay(RETRY_BASE_DELAY_MS * Math.pow(2, attempt));
@@ -320,6 +370,7 @@ async function callGemini(options: CallGeminiOptions): Promise<string> {
 const TUTOR_SYSTEM_INSTRUCTION = [
   'You are an expert NCERT Class 11 Biology tutor for NEET preparation.',
   'Give concise, high-yield answers using correct NCERT terminology.',
+  'Keep standard answers under 160 words unless the student explicitly asks for detail.',
   'Prefer short paragraphs and bullet points over walls of text.',
   'When the student asks for practice questions, give NEET-pattern MCQs with the answer and a one-line explanation.',
 ].join(' ');
@@ -330,14 +381,14 @@ export async function askGeminiBiology(question: string, history: ChatTurn[] = [
   if (!trimmed) return ''
 
   // keep the recent context only — older turns add tokens without much value
-  const recentHistory = history.slice(-10);
+  const recentHistory = history.slice(-FREE_TIER_HISTORY_TURNS);
 
   return callGemini({
     prompt: [...recentHistory, { role: 'user', text: trimmed }],
     systemInstruction: TUTOR_SYSTEM_INSTRUCTION,
     model: GEMINI_MODELS.chat,
     temperature: 0.6,
-    maxOutputTokens: 2048,
+    maxOutputTokens: FREE_TIER_CHAT_OUTPUT_TOKENS,
   });
 }
 
@@ -547,7 +598,7 @@ export async function generateFlashcards(opts: {
     systemInstruction:
       'You write accurate NCERT Class 11 Biology revision material for Indian NEET aspirants. ' +
       'Answer only with JSON matching the given schema.',
-    maxOutputTokens: 4096,
+    maxOutputTokens: FREE_TIER_GENERATION_OUTPUT_TOKENS,
   });
 
   if (!Array.isArray(cards) || cards.length === 0) {
@@ -598,7 +649,7 @@ export async function generateMCQs(opts: {
     systemInstruction:
       'You are a NEET Biology question setter using NCERT Class 11 content. ' +
       'Answer only with JSON matching the given schema.',
-    maxOutputTokens: 4096,
+    maxOutputTokens: FREE_TIER_GENERATION_OUTPUT_TOKENS,
   });
 
   if (!Array.isArray(questions) || questions.length === 0) {

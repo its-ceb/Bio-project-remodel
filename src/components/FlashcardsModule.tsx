@@ -20,15 +20,14 @@ import {
   readAiCache,
   writeAiCache,
   clearAiCache,
-  UNIT_IDS,
 } from '@/lib/gemini';
 
 interface FlashcardsModuleProps {
   selectedUnit: UnitId | 'all';
 }
 
-/** How many cards one AI request produces. Bigger = fewer calls = fewer tokens. */
-const AI_BATCH_SIZE = 8;
+/** Smaller batches keep each free-tier AI generation within a modest token budget. */
+const AI_BATCH_SIZE = 4;
 
 /** Human names so the prompt can describe the unit properly. */
 const UNIT_NAMES: Record<UnitId, string> = {

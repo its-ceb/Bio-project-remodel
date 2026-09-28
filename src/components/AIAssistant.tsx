@@ -56,7 +56,7 @@ export default function AIAssistant({ isOpen = true, onClose }: AIAssistantProps
   const buildHistory = (list: Message[]): ChatTurn[] =>
     list
       .filter((m) => !m.error && m.id !== 'welcome')
-      .slice(-10)
+      .slice(-4)
       .map((m) => ({ role: m.sender === 'ai' ? ('model' as const) : ('user' as const), text: m.text }));
 
   const ask = async (question: string, historyOverride?: Message[]) => {
@@ -141,7 +141,7 @@ export default function AIAssistant({ isOpen = true, onClose }: AIAssistantProps
                 Gemini Powered
               </span>
             </h3>
-            <p className="text-xs text-slate-400">Instant doubt resolution & NCERT guidance</p>
+            <p className="text-xs text-slate-400">Free-tier saver · concise NCERT guidance</p>
           </div>
         </div>
 
