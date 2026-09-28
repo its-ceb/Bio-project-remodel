@@ -340,11 +340,11 @@ export default function UserProfileModal({
   return (
     <div
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4"
+      className="profile-editor-overlay fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 backdrop-blur-md p-4"
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl relative text-slate-100"
+        className="profile-editor-card w-full max-w-md max-h-[90vh] overflow-y-auto rounded-3xl border border-slate-800 bg-[#1f2c34] p-5 shadow-2xl relative text-slate-100 sm:p-6"
       >
         <button
           onClick={onClose}
@@ -353,30 +353,36 @@ export default function UserProfileModal({
           <X className="h-5 w-5" />
         </button>
 
-        <div className="flex items-center gap-3 mb-6">
-          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+        <div className="profile-editor-hero mb-5 flex items-center gap-3 rounded-2xl p-3.5 pr-11">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-emerald-300/20 bg-emerald-400/10 text-emerald-300 shadow-lg shadow-emerald-950/20">
             <User className="h-5 w-5" />
           </div>
-          <div>
-            <h3 className="text-lg font-bold text-white">Edit Profile</h3>
-            <p className="text-xs text-slate-400">@{username}</p>
+          <div className="min-w-0">
+            <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-emerald-300/85">Identity studio</p>
+            <h3 className="mt-0.5 text-lg font-bold text-white">Edit Profile</h3>
+            <p className="truncate text-xs text-slate-400">@{username}</p>
           </div>
         </div>
 
         {/* PREVIEW */}
-        <div className="mb-6 rounded-2xl bg-[#111b21] p-4 border border-slate-800">
-          <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">
-            Profile Preview
-          </span>
+        <div className="profile-preview-card mb-6 overflow-hidden rounded-2xl border border-slate-800 p-4">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-300">
+              Live profile preview
+            </span>
+            <span className="rounded-full border border-emerald-400/20 bg-emerald-400/10 px-2 py-0.5 text-[9px] font-bold text-emerald-300">VISIBLE TO CHAT</span>
+          </div>
           <div className="flex items-center gap-3">
-            {avatarUrl ? (
-              <img src={avatarUrl} alt="Avatar" className="h-12 w-12 rounded-full object-cover ring-2 ring-emerald-500/30" />
-            ) : (
-              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-emerald-600 font-bold text-white">
-                {trimmedUsername.slice(0, 2).toUpperCase() || username.slice(0, 2).toUpperCase()}
-              </div>
-            )}
-            <div>
+            <div className="profile-avatar-aura profile-avatar-aura-self h-14 w-14 shrink-0">
+              {avatarUrl ? (
+                <img src={avatarUrl} alt="Avatar" className="relative z-10 h-full w-full rounded-full object-cover" />
+              ) : (
+                <div className="relative z-10 flex h-full w-full items-center justify-center rounded-full bg-emerald-600 font-bold text-white">
+                  {trimmedUsername.slice(0, 2).toUpperCase() || username.slice(0, 2).toUpperCase()}
+                </div>
+              )}
+            </div>
+            <div className="min-w-0">
               <div className="flex items-center gap-2">
                 <span className="font-bold text-sm text-white">
                   {trimmedUsername || username}
@@ -411,7 +417,7 @@ export default function UserProfileModal({
           <div>
             <label className="block text-xs font-semibold text-slate-300 mb-1">Profile Picture</label>
             <div className="flex items-center gap-2">
-              <label className="flex-1 flex items-center justify-center gap-2 rounded-xl border border-dashed border-slate-700 bg-[#2a3942] px-3.5 py-2.5 text-xs text-slate-300 hover:border-emerald-500 hover:text-white cursor-pointer transition-colors">
+              <label className="profile-upload-card flex flex-1 cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-slate-700 bg-[#2a3942] px-3.5 py-2.5 text-xs text-slate-300 transition-colors hover:border-emerald-400 hover:text-white">
                 {uploadingImage ? (
                   <Loader2 className="h-4 w-4 animate-spin text-emerald-400" />
                 ) : (
@@ -451,7 +457,7 @@ export default function UserProfileModal({
           </div>
 
           {/* ============================ ACCOUNT ============================ */}
-          <div className="rounded-2xl border border-slate-800 bg-[#111b21] p-3.5 space-y-3">
+          <div className="profile-account-panel rounded-2xl border border-slate-800 bg-[#111b21] p-3.5 space-y-3">
             <div className="flex items-center justify-between">
               <span className="flex items-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                 <AtSign className="h-3.5 w-3.5 text-emerald-400" /> Account
@@ -551,14 +557,14 @@ export default function UserProfileModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl bg-slate-800 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-700"
+              className="profile-cancel-button rounded-xl bg-slate-800 px-4 py-2 text-xs font-bold text-slate-300 hover:bg-slate-700"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={saving || uploadingImage || usernameStatus === 'taken' || usernameStatus === 'invalid'}
-              className="rounded-xl bg-[#00a884] px-5 py-2 text-xs font-bold text-white hover:bg-[#008f70] disabled:opacity-50 shadow-lg"
+              className="profile-save-button rounded-xl bg-[#00a884] px-5 py-2 text-xs font-bold text-white hover:bg-[#008f70] disabled:opacity-50 shadow-lg"
             >
               {saving ? 'Saving...' : usernameChanged || wantsNewPassword ? 'Save Changes' : 'Save Profile'}
             </button>

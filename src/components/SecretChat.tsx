@@ -3476,41 +3476,70 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         >
           <div
             onClick={(e) => e.stopPropagation()}
-            className="chat-dialog w-full max-w-xs rounded-3xl border border-slate-800 bg-[#1f2c34] p-6 shadow-2xl text-center relative"
+            className="chat-dialog profile-inspect-card w-full max-w-xs overflow-hidden rounded-3xl border border-slate-800 bg-[#1f2c34] text-center shadow-2xl"
           >
-            <div className="flex justify-center mb-3">
-              {renderAvatar(inspectingUser, 'h-16 w-16')}
-            </div>
-            <div className="flex items-center justify-center gap-2 mb-1">
-              <h3 className="text-base font-bold text-white">{inspectingUser}</h3>
-              {renderDiscordBadge(inspectingUser)}
-            </div>
-            <p className="text-xs text-emerald-400 mb-3">
-              {onlineUsers[inspectingUser] ? 'Online' : 'Offline'}
-            </p>
-            <p className="text-xs text-slate-300 italic mb-4 bg-[#111b21] p-3 rounded-xl border border-slate-800">
-              "{userProfiles[inspectingUser]?.bio || 'No bio provided'}"
-            </p>
-
-            <div className="flex items-center gap-2">
+            <div className="profile-inspect-hero relative px-5 pb-5 pt-4">
               <button
                 onClick={() => setInspectingUser(null)}
-                className="flex-1 rounded-xl bg-slate-800 py-2.5 text-xs font-bold text-white hover:bg-slate-700"
+                aria-label={`Close ${inspectingUser}'s profile`}
+                className="absolute right-3 top-3 z-10 rounded-full border border-white/10 bg-slate-950/25 p-1.5 text-slate-300 transition-colors hover:bg-white/10 hover:text-white"
               >
-                Close
+                <X className="h-4 w-4" />
               </button>
-              {inspectingUser !== currentUser && (
+              <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-emerald-200/80">Member profile</p>
+              <div className="mt-3 flex justify-center">
+                <div className="profile-avatar-aura profile-avatar-aura-member h-20 w-20">
+                  {renderAvatar(inspectingUser, 'h-full w-full')}
+                  <span
+                    aria-label={onlineUsers[inspectingUser] ? 'Online' : 'Offline'}
+                    className={`absolute bottom-0.5 right-0.5 z-20 h-4 w-4 rounded-full border-[3px] border-[#152842] ${
+                      onlineUsers[inspectingUser] ? 'bg-emerald-400 shadow-[0_0_15px_rgba(52,211,153,0.9)]' : 'bg-slate-500'
+                    }`}
+                  />
+                </div>
+              </div>
+              <div className="mt-3 flex items-center justify-center gap-2">
+                <h3 className="text-base font-bold text-white">{inspectingUser}</h3>
+                {renderDiscordBadge(inspectingUser)}
+              </div>
+              <span className={`mt-1.5 inline-flex items-center gap-1.5 rounded-full border px-2 py-1 text-[10px] font-bold ${
+                onlineUsers[inspectingUser]
+                  ? 'border-emerald-300/20 bg-emerald-400/10 text-emerald-200'
+                  : 'border-slate-400/15 bg-slate-900/25 text-slate-300'
+              }`}>
+                <span className={`h-1.5 w-1.5 rounded-full ${onlineUsers[inspectingUser] ? 'bg-emerald-300' : 'bg-slate-400'}`} />
+                {onlineUsers[inspectingUser] ? 'Online now' : 'Offline'}
+              </span>
+            </div>
+
+            <div className="p-5 pt-4">
+              <div className="profile-bio-card mb-4 rounded-2xl border border-slate-800 p-3 text-left">
+                <span className="mb-1 block text-[9px] font-bold uppercase tracking-wider text-slate-500">About</span>
+                <p className="text-xs leading-relaxed text-slate-200 italic">
+                  “{userProfiles[inspectingUser]?.bio || 'No bio provided'}”
+                </p>
+              </div>
+
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={() => {
-                    const target = inspectingUser;
-                    setInspectingUser(null);
-                    handleStartDMWith(target);
-                  }}
-                  className="flex-1 rounded-xl bg-[#00a884] py-2.5 text-xs font-bold text-white hover:bg-[#008f70]"
+                  onClick={() => setInspectingUser(null)}
+                  className="profile-inspect-secondary flex-1 rounded-xl py-2.5 text-xs font-bold text-white"
                 >
-                  Message
+                  Close
                 </button>
-              )}
+                {inspectingUser !== currentUser && (
+                  <button
+                    onClick={() => {
+                      const target = inspectingUser;
+                      setInspectingUser(null);
+                      handleStartDMWith(target);
+                    }}
+                    className="profile-inspect-message flex-1 rounded-xl py-2.5 text-xs font-bold text-white"
+                  >
+                    Message
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
