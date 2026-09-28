@@ -6,7 +6,7 @@ import {
   MoreVertical, Pin, Settings, Eye, Crown, X, Award,
   Image as ImageIcon, Reply, Loader2, ArrowLeft, Pencil, Check,
   ChevronDown, ChevronRight, Info, UserMinus, Search, Smile, Copy,
-  SmilePlus, ArrowDown, History, Film
+  SmilePlus, ArrowDown, History, Film, Camera
 } from 'lucide-react';
 import { database } from '@/lib/firebase';
 import { ref, push, onValue, get, set, onDisconnect, update, remove, query, limitToLast } from 'firebase/database';
@@ -161,8 +161,10 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
+  const [showImageSourcePicker, setShowImageSourcePicker] = useState(false);
   const [expandedImageUrl, setExpandedImageUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
 
   // Reply State
@@ -611,9 +613,11 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
   const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    setShowImageSourcePicker(false);
     if (file) {
       if (!file.type.startsWith('image/')) {
         alert('Please select a valid image file.');
+        e.target.value = '';
         return;
       }
       setSelectedImage(file);
@@ -626,7 +630,9 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     setSelectedImage(null);
     setSelectedGifUrl('');
     setImagePreview(null);
+    setShowImageSourcePicker(false);
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
   };
 
   const handleGifSelect = (gifUrl: string) => {
@@ -635,6 +641,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     setSelectedGifUrl(gifUrl);
     setImagePreview(gifUrl);
     if (fileInputRef.current) fileInputRef.current.value = '';
+    if (cameraInputRef.current) cameraInputRef.current.value = '';
+    setShowImageSourcePicker(false);
     setShowGifPicker(false);
   };
 
@@ -2866,7 +2874,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           )}
 
           <form onSubmit={handleSendMessage} className="flex items-end gap-2 max-w-5xl mx-auto">
-            {/* HIDDEN FILE INPUT */}
+            {/* Separate inputs preserve a clear user choice: the normal
+                picker for existing files and capture=environment for camera. */}
             <input
               type="file"
               accept="image/*"
@@ -2874,20 +2883,80 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               onChange={handleImageSelect}
               className="hidden"
             />
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              ref={cameraInputRef}
+              onChange={handleImageSelect}
+              className="hidden"
+            />
+
+            <div className="relative shrink-0">
+              <button
+                type="button"
+                onClick={() => setShowImageSourcePicker((open) => !open)}
+                disabled={!!editingMessage}
+                title={editingMessage ? 'Finish editing first' : 'Attach an image'}
+                aria-label={editingMessage ? 'Finish editing first' : 'Attach an image'}
+                aria-haspopup="dialog"
+                aria-expanded={showImageSourcePicker}
+                className="chat-composer-action flex h-11 w-11 items-center justify-center rounded-xl bg-[#2a3942] text-slate-300 hover:text-emerald-400 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-[#2a3942] transition-colors"
+              >
+                <ImageIcon className="h-5 w-5" />
+              </button>
+
+              {showImageSourcePicker && !editingMessage && (
+                <div
+                  role="dialog"
+                  aria-label="Choose image source"
+                  className="chat-popover chat-attachment-source chat-popup-enter absolute bottom-[calc(100%+0.6rem)] left-0 z-30 w-60 rounded-2xl border border-slate-700 bg-[#1f2c34] p-2 shadow-2xl"
+                >
+                  <p className="px-2 pb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                    Add an image
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowImageSourcePicker(false);
+                      cameraInputRef.current?.click();
+                    }}
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-slate-100 transition-colors hover:bg-slate-700/70"
+                  >
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-300">
+                      <Camera className="h-4 w-4" />
+                    </span>
+                    <span>
+                      <span className="block">Take a photo</span>
+                      <span className="block text-[10px] font-normal text-slate-400">Use your camera</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowImageSourcePicker(false);
+                      fileInputRef.current?.click();
+                    }}
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-slate-100 transition-colors hover:bg-slate-700/70"
+                  >
+                    <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-sky-500/15 text-sky-300">
+                      <ImageIcon className="h-4 w-4" />
+                    </span>
+                    <span>
+                      <span className="block">Upload from device</span>
+                      <span className="block text-[10px] font-normal text-slate-400">Choose an existing image</span>
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
 
             <button
               type="button"
-              onClick={() => fileInputRef.current?.click()}
-              disabled={!!editingMessage}
-              title={editingMessage ? 'Finish editing first' : 'Attach Image'}
-              className="chat-composer-action flex h-11 w-11 items-center justify-center rounded-xl bg-[#2a3942] text-slate-300 hover:text-emerald-400 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-[#2a3942] transition-colors shrink-0"
-            >
-              <ImageIcon className="h-5 w-5" />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setShowGifPicker(true)}
+              onClick={() => {
+                setShowImageSourcePicker(false);
+                setShowGifPicker(true);
+              }}
               disabled={!!editingMessage}
               title={editingMessage ? 'Finish editing first' : 'Choose a GIF'}
               className="chat-composer-action flex h-11 w-11 items-center justify-center rounded-xl bg-[#2a3942] text-slate-300 hover:text-emerald-400 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-[#2a3942] transition-colors shrink-0"
