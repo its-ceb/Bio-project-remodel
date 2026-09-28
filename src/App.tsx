@@ -8,6 +8,10 @@ import SecretChat from '@/components/SecretChat';
 import PinModal from '@/components/PinModal';
 import type { UnitId } from '@/data/biology';
 
+// A generous interval makes the hidden three-tap entry point practical on
+// phones, where rapid taps are less reliable than with a mouse.
+const COPYRIGHT_TAP_WINDOW_MS = 800;
+
 export default function App() {
   const [activeTab, setActiveTab] = useState<TabId>('notes');
   const [selectedUnit, setSelectedUnit] = useState<UnitId | 'all'>('all');
@@ -32,7 +36,7 @@ export default function App() {
 
     clickTimerRef.current = setTimeout(() => {
       clickCountRef.current = 0;
-    }, 400);
+    }, COPYRIGHT_TAP_WINDOW_MS);
   };
 
   if (showSecretChat) {
@@ -65,7 +69,8 @@ export default function App() {
           <p>
             <button
               onClick={handleCopyrightClick}
-              className="font-semibold text-slate-400 cursor-default focus:outline-none"
+              title="Copyright"
+              className="relative inline-flex h-5 w-5 touch-manipulation items-center justify-center rounded font-semibold text-slate-400 transition-colors hover:text-slate-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 focus-visible:ring-offset-2 after:absolute after:-inset-3 after:content-['']"
               aria-label="Copyright"
             >
               ©
