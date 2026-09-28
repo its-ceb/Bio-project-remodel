@@ -4,15 +4,9 @@ import {
 } from 'lucide-react';
 import { database } from '@/lib/firebase';
 import { ref, update, get } from 'firebase/database';
+import { badgeBackgroundStyle, getBadgePresentation, type UserProfileData } from '@/lib/badges';
 
-export interface UserProfileData {
-  bio?: string;
-  avatarUrl?: string;
-  badgeText?: string;
-  badgeEmoji?: string;
-  badgeBgColor?: string;
-  isFounder?: boolean;
-}
+export type { UserProfileData } from '@/lib/badges';
 
 interface UserProfileModalProps {
   username: string;
@@ -256,6 +250,9 @@ export default function UserProfileModal({
 
       /* ---------------- profile payload ---------------- */
       const isFounderClaim = secretCode.trim() === '777-founder' || currentProfile.isFounder;
+      // Retired 400/600 badges resolve to null, so the next profile save
+      // cleans their text from that user's profile instead of preserving them.
+      const retainedBadge = getBadgePresentation(currentProfile);
 
       const updatePayload: UserProfileData = {
         bio,
@@ -264,13 +261,13 @@ export default function UserProfileModal({
           ? {
               badgeText: 'FOUNDER',
               badgeEmoji: '🐺',
-              badgeBgColor: 'bg-gradient-to-r from-red-700 to-rose-900 border border-red-500/50',
+              badgeColors: '',
               isFounder: true,
             }
           : {
-              badgeText: currentProfile.badgeText || '',
-              badgeEmoji: currentProfile.badgeEmoji || '',
-              badgeBgColor: currentProfile.badgeBgColor || '',
+              badgeText: retainedBadge?.text || '',
+              badgeEmoji: retainedBadge?.emoji || '',
+              badgeColors: currentProfile.badgeColors || '',
               isFounder: false,
             }),
       };
@@ -387,18 +384,23 @@ export default function UserProfileModal({
                 {usernameChanged && trimmedUsername && (
                   <span className="text-[10px] text-slate-500 line-through">@{username}</span>
                 )}
-                {(currentProfile.badgeText || secretCode.trim() === '777-founder') && (
-                  <span
-                    className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[10px] font-black uppercase tracking-wider text-white shadow-sm ${
-                      secretCode.trim() === '777-founder' || currentProfile.isFounder
-                        ? 'bg-gradient-to-r from-red-700 to-rose-900 border border-red-500/50'
-                        : currentProfile.badgeBgColor
-                    }`}
-                  >
-                    <span>{secretCode.trim() === '777-founder' || currentProfile.isFounder ? '🐺' : currentProfile.badgeEmoji}</span>
-                    <span>{secretCode.trim() === '777-founder' || currentProfile.isFounder ? 'FOUNDER' : currentProfile.badgeText}</span>
-                  </span>
-                )}
+                {(() => {
+                  const previewBadge = getBadgePresentation({
+                    ...currentProfile,
+                    isFounder: secretCode.trim() === '777-founder' || currentProfile.isFounder,
+                  });
+                  if (!previewBadge) return null;
+
+                  return (
+                    <span
+                      style={badgeBackgroundStyle(previewBadge.colors)}
+                      className="inline-flex items-center gap-1 rounded border border-white/25 px-1.5 py-0.5 font-mono text-[10px] font-black uppercase tracking-wider text-white shadow-sm"
+                    >
+                      <span>{previewBadge.emoji}</span>
+                      <span>{previewBadge.text}</span>
+                    </span>
+                  );
+                })()}
               </div>
               <p className="text-xs text-slate-400 mt-1 italic">{bio || 'No bio set yet'}</p>
             </div>

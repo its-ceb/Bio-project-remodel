@@ -10,7 +10,8 @@ import {
 } from 'lucide-react';
 import { database } from '@/lib/firebase';
 import { ref, push, onValue, get, set, onDisconnect, update, remove, query, limitToLast } from 'firebase/database';
-import UserProfileModal, { UserProfileData } from './UserProfileModal';
+import UserProfileModal from './UserProfileModal';
+import { badgeBackgroundStyle, getBadgePresentation, normaliseBadgeColors, type UserProfileData } from '@/lib/badges';
 
 interface SecretChatProps {
   onClose: () => void;
@@ -188,6 +189,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const [activeMessageMenuId, setActiveMessageMenuId] = useState<string | null>(null);
   // Emoji reaction picker state
   const [activeReactionPickerId, setActiveReactionPickerId] = useState<string | null>(null);
+  const [reactionEmojiInput, setReactionEmojiInput] = useState('');
+  const [reactionInputError, setReactionInputError] = useState('');
   // Actions revealed by tapping / long-pressing a message (phones). On desktop
   // the buttons simply appear on hover.
   const [actionsVisibleId, setActionsVisibleId] = useState<string | null>(null);
@@ -212,9 +215,12 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const [typingUsers, setTypingUsers] = useState<Record<string, boolean>>({});
   const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Grant Badge Form state
+  // Founder badge studio form state
   const [grantTargetUser, setGrantTargetUser] = useState('');
-  const [badgeCodeInput, setBadgeCodeInput] = useState('');
+  const [badgeNameInput, setBadgeNameInput] = useState('');
+  const [badgeEmojiInput, setBadgeEmojiInput] = useState('🏷️');
+  const [badgeColorsInput, setBadgeColorsInput] = useState('#7c3aed, #ec4899');
+  const [badgeFormError, setBadgeFormError] = useState('');
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -401,8 +407,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       return;
     }
     const rect = el.getBoundingClientRect();
-    const width = anchor.kind === 'picker' ? 232 : 176;
-    const height = anchor.kind === 'picker' ? 52 : 250;
+    const width = anchor.kind === 'picker' ? Math.min(288, window.innerWidth - 16) : 176;
+    const height = anchor.kind === 'picker' ? 132 : 250;
     const openUp = window.innerHeight - rect.bottom < height + 16;
 
     let left = rect.left;
@@ -463,6 +469,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       return;
     }
     setActiveMessageMenuId(null);
+    setReactionEmojiInput('');
+    setReactionInputError('');
     setActiveReactionPickerId(msg.id);
     setActionsVisibleId(msg.id);
   };
@@ -833,27 +841,24 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
   const handleGrantBadgeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const code = badgeCodeInput.trim();
-    if (!grantTargetUser || !code) return;
+    const badgeName = badgeNameInput.trim();
+    const badgeEmoji = badgeEmojiInput.trim();
+    const badgeColors = normaliseBadgeColors(badgeColorsInput);
 
-    let badgeData: Partial<UserProfileData> = {};
-
-    if (code === '400') {
-      badgeData = {
-        badgeText: 'NOOB',
-        badgeEmoji: '🐣',
-        badgeBgColor: 'bg-slate-700 border border-slate-500',
-      };
-    } else if (code === '600') {
-      badgeData = {
-        badgeText: 'TUFF',
-        badgeEmoji: '🗿',
-        badgeBgColor: 'bg-gradient-to-r from-purple-700 to-indigo-900 border border-purple-500/50',
-      };
-    } else {
-      alert('Invalid badge code. Use 400 for NOOB or 600 for TUFF.');
+    if (!grantTargetUser || !badgeName || !badgeEmoji) {
+      setBadgeFormError('Choose a user, badge name, and emoji.');
       return;
     }
+    if (!badgeColors) {
+      setBadgeFormError('Use one hex colour or two hex colours separated by a comma.');
+      return;
+    }
+
+    const badgeData: Partial<UserProfileData> = {
+      badgeText: badgeName,
+      badgeEmoji,
+      badgeColors,
+    };
 
     try {
       const targetRef = ref(database, `users/${grantTargetUser}/profile`);
@@ -861,17 +866,27 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       await fetchUsersAndProfiles();
       alert(`Badge successfully granted to @${grantTargetUser}!`);
       setGrantTargetUser('');
-      setBadgeCodeInput('');
+      setBadgeNameInput('');
+      setBadgeEmojiInput('🏷️');
+      setBadgeColorsInput('#7c3aed, #ec4899');
+      setBadgeFormError('');
       setShowGrantBadgeModal(false);
     } catch (err) {
       console.error('Error granting badge:', err);
+      setBadgeFormError('Could not grant this badge. Check your connection and try again.');
     }
   };
 
   /* ------------------------------------------------------------------ */
   /* REACTIONS                                                          */
   /* ------------------------------------------------------------------ */
-  const toggleReaction = async (msg: ChatMessage, emoji: string) => {
+  const isSafeReactionEmoji = (emoji: string) =>
+    emoji.length > 0 &&
+    emoji.length <= 32 &&
+    /[\p{Extended_Pictographic}\u{1F1E6}-\u{1F1FF}]/u.test(emoji) &&
+    !['.', '#', '$', '[', ']', '/'].some((reserved) => emoji.includes(reserved));
+
+  const toggleReaction = async (msg: ChatMessage, emoji: string, keepPickerOpen = false) => {
     if (!currentUser) return;
 
     const usersForEmoji = msg.reactions?.[emoji] || {};
@@ -895,7 +910,19 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       console.error('Error toggling reaction:', err);
     }
 
-    setActiveReactionPickerId(null);
+    if (!keepPickerOpen) setActiveReactionPickerId(null);
+  };
+
+  const addCustomReactions = async (msg: ChatMessage) => {
+    const emojis = Array.from(new Set(reactionEmojiInput.trim().split(/\s+/).filter(isSafeReactionEmoji))).slice(0, 6);
+    if (emojis.length === 0) {
+      setReactionInputError('Enter an emoji from your keyboard. Separate multiple emojis with spaces.');
+      return;
+    }
+
+    await Promise.all(emojis.map((emoji) => toggleReaction(msg, emoji, true)));
+    setReactionEmojiInput('');
+    setReactionInputError('');
   };
 
   const buzz = (ms: number) => {
@@ -1366,16 +1393,16 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   };
 
   const renderDiscordBadge = (uname: string) => {
-    const prof = userProfiles[uname];
-    if (!prof || !prof.badgeText) return null;
+    const badge = getBadgePresentation(userProfiles[uname]);
+    if (!badge) return null;
+
     return (
       <span
-        className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[9px] font-black uppercase tracking-wider text-white shadow-sm ${
-          prof.badgeBgColor || 'bg-emerald-600'
-        }`}
+        style={badgeBackgroundStyle(badge.colors)}
+        className="inline-flex shrink-0 items-center gap-1 rounded border border-white/25 px-1.5 py-0.5 font-mono text-[9px] font-black uppercase tracking-wider text-white shadow-sm"
       >
-        <span>{prof.badgeEmoji || '🤖'}</span>
-        <span>{prof.badgeText}</span>
+        <span>{badge.emoji}</span>
+        <span>{badge.text}</span>
       </span>
     );
   };
@@ -1581,23 +1608,59 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         }}
       >
         {activeReactionPickerId ? (
-          /* QUICK REACTION PICKER */
-          <div className="flex items-center gap-0.5 rounded-full border border-slate-700 bg-[#1f2c34] px-1.5 py-1 shadow-2xl">
-            {QUICK_REACTIONS.map((emoji) => {
-              const mine = myReactions.includes(emoji);
-              return (
-                <button
-                  key={emoji}
-                  onClick={() => toggleReaction(msg, emoji)}
-                  title={mine ? `Remove ${emoji}` : `React ${emoji}`}
-                  className={`flex h-8 w-8 items-center justify-center rounded-full text-base leading-none transition-transform hover:scale-125 active:scale-95 ${
-                    mine ? 'bg-emerald-600/30 ring-1 ring-emerald-500/60' : 'hover:bg-slate-700'
-                  }`}
-                >
-                  {emoji}
-                </button>
-              );
-            })}
+          /* Instagram-style reaction picker: quick reactions plus emoji-keyboard input. */
+          <div className="w-[min(18rem,calc(100vw-1rem))] rounded-2xl border border-slate-700 bg-[#1f2c34] p-2 shadow-2xl">
+            <div className="flex items-center justify-between gap-0.5">
+              {QUICK_REACTIONS.map((emoji) => {
+                const mine = myReactions.includes(emoji);
+                return (
+                  <button
+                    key={emoji}
+                    type="button"
+                    onClick={() => toggleReaction(msg, emoji, true)}
+                    title={mine ? `Remove ${emoji}` : `React ${emoji}`}
+                    className={`flex h-8 w-8 items-center justify-center rounded-full text-base leading-none transition-transform hover:scale-125 active:scale-95 ${
+                      mine ? 'bg-emerald-600/30 ring-1 ring-emerald-500/60' : 'hover:bg-slate-700'
+                    }`}
+                  >
+                    {emoji}
+                  </button>
+                );
+              })}
+            </div>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void addCustomReactions(msg);
+              }}
+              className="mt-2 flex items-center gap-1.5"
+            >
+              <input
+                type="text"
+                value={reactionEmojiInput}
+                onChange={(event) => {
+                  setReactionEmojiInput(event.target.value);
+                  setReactionInputError('');
+                }}
+                maxLength={96}
+                aria-label="Add emoji reactions"
+                placeholder="Add emoji(s): 🎉 🤯"
+                className="min-w-0 flex-1 rounded-lg border border-slate-700 bg-[#111b21] px-2 py-1.5 text-sm text-white placeholder:text-[11px] placeholder:text-slate-500 focus:border-emerald-500 focus:outline-none"
+              />
+              <button
+                type="submit"
+                title="Add typed emoji reactions"
+                aria-label="Add typed emoji reactions"
+                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-emerald-600 text-white transition-colors hover:bg-emerald-500"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+            </form>
+            {reactionInputError ? (
+              <p className="mt-1.5 text-[10px] text-amber-300">{reactionInputError}</p>
+            ) : (
+              <p className="mt-1.5 text-[10px] text-slate-400">Use your emoji keyboard. Separate multiple reactions with spaces.</p>
+            )}
           </div>
         ) : (
           /* 3-DOT MENU */
@@ -1607,7 +1670,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               {QUICK_REACTIONS.map((emoji) => (
                 <button
                   key={emoji}
-                  onClick={() => toggleReaction(msg, emoji)}
+                  onClick={() => toggleReaction(msg, emoji, true)}
                   title={`React ${emoji}`}
                   className={`flex h-7 w-7 items-center justify-center rounded-full text-sm leading-none transition-transform hover:scale-125 active:scale-95 ${
                     myReactions.includes(emoji)
@@ -2648,13 +2711,14 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                         <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-emerald-500 ring-[3px] ring-[#111b21]" />
                       </div>
                       <div className="overflow-hidden flex-1 min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[13px] font-semibold text-slate-100 truncate">
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <span className="truncate text-[13px] font-semibold text-slate-100">
                             {u}
                             {u === currentUser && (
                               <span className="text-slate-500 font-normal"> (you)</span>
                             )}
                           </span>
+                          {renderDiscordBadge(u)}
                         </div>
                         {activeGroup && u === activeGroup.createdBy ? (
                           <span className="flex items-center gap-1 text-[10px] text-amber-400">
@@ -2704,12 +2768,15 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                         <span className="absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full bg-slate-600 ring-[3px] ring-[#111b21]" />
                       </div>
                       <div className="overflow-hidden flex-1 min-w-0">
-                        <span className="text-[13px] font-semibold text-slate-400 truncate block">
-                          {u}
-                          {u === currentUser && (
-                            <span className="text-slate-500 font-normal"> (you)</span>
-                          )}
-                        </span>
+                        <div className="flex min-w-0 items-center gap-1.5">
+                          <span className="block truncate text-[13px] font-semibold text-slate-400">
+                            {u}
+                            {u === currentUser && (
+                              <span className="text-slate-500 font-normal"> (you)</span>
+                            )}
+                          </span>
+                          {renderDiscordBadge(u)}
+                        </div>
                         <span className="block text-[10px] text-slate-500">Offline</span>
                       </div>
                       {u !== currentUser && (
@@ -2836,6 +2903,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                 <button
                   onClick={() => {
                     fetchUsersAndProfiles();
+                    setBadgeFormError('');
                     setShowGrantBadgeModal(true);
                   }}
                   className="w-full flex items-center justify-between rounded-xl bg-amber-600/10 border border-amber-500/30 px-4 py-3 text-xs font-bold text-amber-400 hover:bg-amber-600 hover:text-white transition-all shadow-md"
@@ -2895,16 +2963,63 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-300 mb-1.5">
-                  Badge Code (400 = Noob, 600 = Tuff)
+                  Badge Name
                 </label>
                 <input
                   type="text"
-                  placeholder="Enter code (400 or 600)"
-                  value={badgeCodeInput}
-                  onChange={(e) => setBadgeCodeInput(e.target.value)}
+                  placeholder="e.g. Biology Legend"
+                  value={badgeNameInput}
+                  onChange={(e) => {
+                    setBadgeNameInput(e.target.value);
+                    setBadgeFormError('');
+                  }}
+                  maxLength={28}
                   className="w-full rounded-xl border border-slate-700 bg-[#2a3942] px-3.5 py-2.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
                 />
               </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Badge Emoji
+                </label>
+                <input
+                  type="text"
+                  placeholder="Use your emoji keyboard, e.g. 🧬"
+                  value={badgeEmojiInput}
+                  onChange={(e) => {
+                    setBadgeEmojiInput(e.target.value);
+                    setBadgeFormError('');
+                  }}
+                  maxLength={20}
+                  className="w-full rounded-xl border border-slate-700 bg-[#2a3942] px-3.5 py-2.5 text-sm text-white placeholder:text-xs placeholder:text-slate-500 focus:outline-none focus:border-amber-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-300 mb-1.5">
+                  Badge Colour / Hex Gradient
+                </label>
+                <input
+                  type="text"
+                  placeholder="#7c3aed, #ec4899"
+                  value={badgeColorsInput}
+                  onChange={(e) => {
+                    setBadgeColorsInput(e.target.value);
+                    setBadgeFormError('');
+                  }}
+                  spellCheck={false}
+                  className="w-full rounded-xl border border-slate-700 bg-[#2a3942] px-3.5 py-2.5 font-mono text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500"
+                />
+                <p className="mt-1.5 text-[10px] text-slate-400">
+                  Enter one hex colour, or two comma-separated hex colours for a gradient.
+                </p>
+              </div>
+
+              {badgeFormError && (
+                <p role="alert" className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-[11px] text-red-300">
+                  {badgeFormError}
+                </p>
+              )}
 
               <div className="flex items-center gap-2 pt-2">
                 <button
@@ -2916,7 +3031,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                 </button>
                 <button
                   type="submit"
-                  disabled={!grantTargetUser || !badgeCodeInput.trim()}
+                  disabled={!grantTargetUser || !badgeNameInput.trim() || !badgeEmojiInput.trim() || !badgeColorsInput.trim()}
                   className="flex-1 rounded-xl bg-amber-600 py-2.5 text-xs font-bold text-white hover:bg-amber-500 disabled:opacity-50 transition-colors shadow-lg"
                 >
                   Grant Badge
@@ -3266,10 +3381,13 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                     />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <span className="block truncate text-xs font-semibold text-slate-200">
-                      {member}
-                      {member === currentUser && <span className="text-slate-500"> (you)</span>}
-                    </span>
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span className="block truncate text-xs font-semibold text-slate-200">
+                        {member}
+                        {member === currentUser && <span className="text-slate-500"> (you)</span>}
+                      </span>
+                      {renderDiscordBadge(member)}
+                    </div>
                     {member === activeGroup.createdBy && (
                       <span className="flex items-center gap-1 text-[10px] text-amber-400">
                         <Crown className="h-2.5 w-2.5" /> Group Creator
