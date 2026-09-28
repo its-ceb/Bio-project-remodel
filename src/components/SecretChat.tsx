@@ -6,11 +6,13 @@ import {
   MoreVertical, Pin, Settings, Eye, Crown, X, Award,
   Image as ImageIcon, Reply, Loader2, ArrowLeft, Pencil, Check,
   ChevronDown, ChevronRight, Info, UserMinus, Search, Smile, Copy,
-  SmilePlus, ArrowDown, History
+  SmilePlus, ArrowDown, History, Film
 } from 'lucide-react';
 import { database } from '@/lib/firebase';
 import { ref, push, onValue, get, set, onDisconnect, update, remove, query, limitToLast } from 'firebase/database';
 import UserProfileModal from './UserProfileModal';
+import KlipyGifPicker from './KlipyGifPicker';
+import MessageLinkContent from './ChatLinkPreview';
 import { badgeBackgroundStyle, getBadgePresentation, normaliseBadgeColors, type UserProfileData } from '@/lib/badges';
 
 interface SecretChatProps {
@@ -47,6 +49,16 @@ interface GroupChat {
   createdBy: string;
   createdAt: number;
   members: Record<string, boolean>;
+}
+
+interface PinnedMessageRecord {
+  messageId: string;
+  sender: string;
+  text: string;
+  imageUrl?: string;
+  timestamp: number;
+  pinnedAt: number;
+  pinnedBy: string;
 }
 
 const IMGBB_API_KEY = '9e341096967527234e9d141032f6a8c5';
@@ -106,6 +118,12 @@ const isGroupKey = (channelKey: string) => channelKey.startsWith(GROUP_PREFIX);
 const groupChannelKey = (groupId: string) => `${GROUP_PREFIX}${groupId}`;
 const groupIdFromChannel = (channelKey: string) => channelKey.slice(GROUP_PREFIX.length);
 
+/** DMs have different active-channel names for each participant, so their pin needs a shared key. */
+const pinScopeKey = (channelKey: string, username: string) => {
+  if (channelKey === 'general' || isGroupKey(channelKey)) return channelKey;
+  return `dm_${[channelKey, username].sort().join('__')}`;
+};
+
 export default function SecretChat({ onClose }: SecretChatProps) {
   const [authMode, setAuthMode] = useState<'login' | 'signup'>('login');
   const [usernameInput, setUsernameInput] = useState('');
@@ -139,8 +157,10 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
   // Image Upload State
   const [selectedImage, setSelectedImage] = useState<File | null>(null);
+  const [selectedGifUrl, setSelectedGifUrl] = useState('');
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [showGifPicker, setShowGifPicker] = useState(false);
   const [expandedImageUrl, setExpandedImageUrl] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messageInputRef = useRef<HTMLTextAreaElement>(null);
@@ -175,8 +195,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const [editingProfile, setEditingProfile] = useState(false);
   const [inspectingUser, setInspectingUser] = useState<string | null>(null);
 
-  // Pinning state
-  const [pinnedMessageId, setPinnedMessageId] = useState<string | null>(null);
+  // Pinning state is synchronized to Firebase per channel / DM.
+  const [pinnedMessage, setPinnedMessage] = useState<PinnedMessageRecord | null>(null);
 
   // Channel Hiding state
   const [hiddenChannels, setHiddenChannels] = useState<string[]>([]);
@@ -294,6 +314,39 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
     return () => unsubscribePresence();
   }, [currentUser]);
+
+  /* ------------------------------------------------------------------ */
+  /* PINNED MESSAGE LISTENER                                            */
+  /* One persistent pin is stored for each public channel, group, or DM. */
+  /* ------------------------------------------------------------------ */
+  useEffect(() => {
+    if (!currentUser) {
+      setPinnedMessage(null);
+      return;
+    }
+
+    setPinnedMessage(null);
+    const scope = pinScopeKey(activeChannel, currentUser);
+    const unsubscribe = onValue(ref(database, `pinnedMessages/${scope}`), (snapshot) => {
+      const value = snapshot.val();
+      if (!value || typeof value.messageId !== 'string') {
+        setPinnedMessage(null);
+        return;
+      }
+
+      setPinnedMessage({
+        messageId: value.messageId,
+        sender: typeof value.sender === 'string' ? value.sender : 'Unknown',
+        text: typeof value.text === 'string' ? value.text : '',
+        ...(typeof value.imageUrl === 'string' ? { imageUrl: value.imageUrl } : {}),
+        timestamp: typeof value.timestamp === 'number' ? value.timestamp : 0,
+        pinnedAt: typeof value.pinnedAt === 'number' ? value.pinnedAt : 0,
+        pinnedBy: typeof value.pinnedBy === 'string' ? value.pinnedBy : '',
+      });
+    });
+
+    return () => unsubscribe();
+  }, [currentUser, activeChannel]);
 
   /* ------------------------------------------------------------------ */
   /* GROUP CHAT LISTENER (only groups the current user is a member of)  */
@@ -542,14 +595,25 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         return;
       }
       setSelectedImage(file);
+      setSelectedGifUrl('');
       setImagePreview(URL.createObjectURL(file));
     }
   };
 
   const cancelImageSelection = () => {
     setSelectedImage(null);
+    setSelectedGifUrl('');
     setImagePreview(null);
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleGifSelect = (gifUrl: string) => {
+    if (editingMessage) return;
+    setSelectedImage(null);
+    setSelectedGifUrl(gifUrl);
+    setImagePreview(gifUrl);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+    setShowGifPicker(false);
   };
 
   const handlePasteImage = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -565,6 +629,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         if (file) {
           e.preventDefault();
           setSelectedImage(file);
+          setSelectedGifUrl('');
           setImagePreview(URL.createObjectURL(file));
         }
         break;
@@ -754,9 +819,9 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     }
 
     /* ---------- SENDING A NEW MESSAGE ---------- */
-    if (!inputMessage.trim() && !selectedImage) return;
+    if (!inputMessage.trim() && !selectedImage && !selectedGifUrl) return;
 
-    let uploadedUrl = '';
+    let uploadedUrl = selectedGifUrl;
     if (selectedImage) {
       setIsUploadingImage(true);
       try {
@@ -823,10 +888,47 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const editMinutesLeft = (msg: ChatMessage) =>
     Math.max(0, Math.ceil((EDIT_WINDOW_MS - (nowTick - msg.timestamp)) / 60000));
 
+  const handlePinMessage = async (msg: ChatMessage) => {
+    if (!currentUser) return;
+
+    const pin: PinnedMessageRecord = {
+      messageId: msg.id,
+      sender: msg.sender,
+      text: msg.text || '',
+      ...(msg.imageUrl ? { imageUrl: msg.imageUrl } : {}),
+      timestamp: msg.timestamp,
+      pinnedAt: Date.now(),
+      pinnedBy: currentUser,
+    };
+
+    try {
+      await set(ref(database, `pinnedMessages/${pinScopeKey(activeChannel, currentUser)}`), pin);
+      closeMessagePopup();
+    } catch (err) {
+      console.error('Error pinning message:', err);
+      alert('Could not pin this message. Please check your connection and try again.');
+    }
+  };
+
+  const handleUnpinMessage = async () => {
+    if (!currentUser) return;
+
+    try {
+      await remove(ref(database, `pinnedMessages/${pinScopeKey(activeChannel, currentUser)}`));
+      closeMessagePopup();
+    } catch (err) {
+      console.error('Error unpinning message:', err);
+      alert('Could not remove the pinned message. Please try again.');
+    }
+  };
+
   const handleDeleteMessage = async (msgId: string) => {
     try {
-      await remove(ref(database, `messages/${msgId}`));
-      if (pinnedMessageId === msgId) setPinnedMessageId(null);
+      const updates: Record<string, null> = { [`messages/${msgId}`]: null };
+      if (currentUser && pinnedMessage?.messageId === msgId) {
+        updates[`pinnedMessages/${pinScopeKey(activeChannel, currentUser)}`] = null;
+      }
+      await update(ref(database), updates);
       if (editingMessage?.id === msgId) cancelEditing();
       setActiveMessageMenuId(null);
     } catch (err) {
@@ -1370,7 +1472,6 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   });
   const lastSeenMsgId = selfReadMessages.length > 0 ? selfReadMessages[selfReadMessages.length - 1].id : null;
 
-  const pinnedMessage = displayedMessages.find((m) => m.id === pinnedMessageId);
 
   const getUnreadCount = (channelKey: string) => {
     const me = currentUser || '';
@@ -1585,6 +1686,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     );
     const editable = canEditMessage(msg);
     const minsLeft = editMinutesLeft(msg);
+    const isPinned = pinnedMessage?.messageId === msg.id;
 
     return createPortal(
       <div
@@ -1713,12 +1815,12 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
             <button
               onClick={() => {
-                setPinnedMessageId(msg.id);
-                closeMessagePopup();
+                if (isPinned) void handleUnpinMessage();
+                else void handlePinMessage(msg);
               }}
               className="flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs font-bold text-slate-200 hover:bg-slate-700/70"
             >
-              <Pin className="h-3.5 w-3.5 text-emerald-400" /> Pin Message
+              <Pin className="h-3.5 w-3.5 text-emerald-400" /> {isPinned ? 'Unpin Message' : 'Pin Message'}
             </button>
 
             {(isSelf || isCurrentFounder) && (
@@ -2246,7 +2348,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
         {pinnedMessage && (
           <div
             onClick={() => {
-              const el = document.getElementById(`msg-${pinnedMessage.id}`);
+              const el = document.getElementById(`msg-${pinnedMessage.messageId}`);
               el?.scrollIntoView({ behavior: 'smooth', block: 'center' });
             }}
             className="flex items-center justify-between border-b border-emerald-500/30 bg-[#18252d] px-4 py-2 text-xs text-slate-200 cursor-pointer hover:bg-[#202c33] transition-colors"
@@ -2255,13 +2357,13 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               <Pin className="h-3.5 w-3.5 text-emerald-400 shrink-0" />
               <span className="font-bold text-emerald-400 shrink-0">{pinnedMessage.sender}:</span>
               <span className="truncate text-slate-300">
-                {pinnedMessage.text || (pinnedMessage.imageUrl ? '📷 Photo' : '')}
+                {pinnedMessage.text || (pinnedMessage.imageUrl ? '📎 Media' : 'Pinned message')}
               </span>
             </div>
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                setPinnedMessageId(null);
+                void handleUnpinMessage();
               }}
               className="text-slate-400 hover:text-white p-1"
             >
@@ -2420,9 +2522,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                       )}
 
                       {/* TEXT CONTENT */}
-                      {msg.text && (
-                        <p className="leading-relaxed whitespace-pre-wrap text-sm">{msg.text}</p>
-                      )}
+                      {msg.text && <MessageLinkContent text={msg.text} />}
 
                       <div className="flex items-center justify-end gap-1 mt-1">
                         {msg.edited && (
@@ -2572,7 +2672,10 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           {imagePreview && !editingMessage && (
             <div className="relative inline-block max-w-5xl mx-auto">
               <div className="relative h-20 w-20 overflow-hidden rounded-xl border border-slate-700 bg-slate-900">
-                <img src={imagePreview} alt="Upload preview" className="h-full w-full object-cover" />
+                <img src={imagePreview} alt={selectedGifUrl ? 'GIF preview' : 'Upload preview'} className="h-full w-full object-cover" />
+                {selectedGifUrl && (
+                  <span className="absolute bottom-1 left-1 rounded bg-slate-950/85 px-1.5 py-0.5 text-[9px] font-bold text-emerald-300">GIF</span>
+                )}
                 <button
                   type="button"
                   onClick={cancelImageSelection}
@@ -2602,6 +2705,16 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#2a3942] text-slate-300 hover:text-emerald-400 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-[#2a3942] transition-colors shrink-0"
             >
               <ImageIcon className="h-5 w-5" />
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setShowGifPicker(true)}
+              disabled={!!editingMessage}
+              title={editingMessage ? 'Finish editing first' : 'Choose a GIF'}
+              className="flex h-11 w-11 items-center justify-center rounded-xl bg-[#2a3942] text-slate-300 hover:text-emerald-400 hover:bg-slate-700 disabled:opacity-40 disabled:hover:bg-[#2a3942] transition-colors shrink-0"
+            >
+              <Film className="h-5 w-5" />
             </button>
 
             {/* MULTI-LINE TEXTAREA INPUT */}
@@ -2639,7 +2752,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
             <button
               type="submit"
-              disabled={(!inputMessage.trim() && !selectedImage) || isUploadingImage}
+              disabled={(!inputMessage.trim() && !selectedImage && !selectedGifUrl) || isUploadingImage}
               title={editingMessage ? 'Save changes' : 'Send message'}
               className={`flex h-11 w-11 items-center justify-center rounded-xl text-white disabled:opacity-50 transition-colors shrink-0 ${
                 editingMessage ? 'bg-amber-600 hover:bg-amber-500' : 'bg-[#00a884] hover:bg-[#008f70]'
@@ -2832,6 +2945,12 @@ export default function SecretChat({ onClose }: SecretChatProps) {
           </div>
         </div>
       )}
+
+      <KlipyGifPicker
+        open={showGifPicker}
+        onClose={() => setShowGifPicker(false)}
+        onSelect={handleGifSelect}
+      />
 
       {/* SETTINGS MODAL */}
       {showSettingsModal && (
