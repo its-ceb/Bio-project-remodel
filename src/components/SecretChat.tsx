@@ -418,7 +418,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   useEffect(() => {
     if (!currentUser) return;
 
-    const typingRef = ref(database, `typing/${activeChannel}`);
+    const typingRef = ref(database, `typing/${pinScopeKey(activeChannel, currentUser)}`);
     const unsubscribe = onValue(typingRef, (snapshot) => {
       const data = snapshot.val() || {};
       const activeTyping: Record<string, boolean> = {};
@@ -597,7 +597,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
     if (!currentUser) return;
 
-    const userTypingRef = ref(database, `typing/${activeChannel}/${currentUser}`);
+    const userTypingRef = ref(database, `typing/${pinScopeKey(activeChannel, currentUser)}/${currentUser}`);
     set(userTypingRef, true);
 
     if (typingTimeoutRef.current) {
@@ -854,7 +854,7 @@ export default function SecretChat({ onClose }: SecretChatProps) {
     if (e) e.preventDefault();
     if (!currentUser) return;
 
-    const userTypingRef = ref(database, `typing/${activeChannel}/${currentUser}`);
+    const userTypingRef = ref(database, `typing/${pinScopeKey(activeChannel, currentUser)}/${currentUser}`);
     set(userTypingRef, false);
 
     /* ---------- EDITING AN EXISTING MESSAGE ---------- */
