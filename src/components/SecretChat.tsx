@@ -66,6 +66,21 @@ interface PinnedMessageRecord {
   pinnedBy: string;
 }
 
+interface AccountAdminMessage {
+  sender?: string;
+  receiver?: string;
+  readBy?: Record<string, boolean>;
+  reactions?: Record<string, Record<string, boolean>>;
+  replyTo?: { sender?: string };
+}
+
+interface AccountAdminGroup {
+  members?: Record<string, boolean>;
+  createdBy?: string;
+}
+
+type AccountAdminPin = Partial<PinnedMessageRecord>;
+
 const IMGBB_API_KEY = '9e341096967527234e9d141032f6a8c5';
 
 /* Group chats are stored in the DB at `groups/{id}`.
@@ -210,6 +225,12 @@ export default function SecretChat({ onClose }: SecretChatProps) {
   const [showChannelMenu, setShowChannelMenu] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showGrantBadgeModal, setShowGrantBadgeModal] = useState(false);
+  const [showAdministrationModal, setShowAdministrationModal] = useState(false);
+  const [adminSearch, setAdminSearch] = useState('');
+  const [adminTargetUser, setAdminTargetUser] = useState('');
+  const [adminConfirmUsername, setAdminConfirmUsername] = useState('');
+  const [adminError, setAdminError] = useState('');
+  const [deletingAccount, setDeletingAccount] = useState(false);
 
   // Participants sidebar state. Keep the panel mounted briefly on close so
   // the exit motion can complete instead of disappearing abruptly.
@@ -1043,6 +1064,121 @@ export default function SecretChat({ onClose }: SecretChatProps) {
 
   const handleUnhideChannel = (channel: string) => {
     setHiddenChannels(hiddenChannels.filter((ch) => ch !== channel));
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!currentUser || !isCurrentFounder || !adminTargetUser || adminTargetUser === currentUser) {
+      setAdminError('You cannot delete your own account.');
+      return;
+    }
+    if (adminConfirmUsername !== adminTargetUser) {
+      setAdminError('Type the exact username to confirm account deletion.');
+      return;
+    }
+
+    setDeletingAccount(true);
+    setAdminError('');
+
+    try {
+      const [messagesSnap, groupsSnap, typingSnap, pinsSnap] = await Promise.all([
+        get(ref(database, 'messages')),
+        get(ref(database, 'groups')),
+        get(ref(database, 'typing')),
+        get(ref(database, 'pinnedMessages')),
+      ]);
+      const updates: Record<string, unknown> = {
+        [`users/${adminTargetUser}`]: null,
+        [`presence/${adminTargetUser}`]: null,
+      };
+      const deletedGroupIds = new Set<string>();
+
+      if (groupsSnap.exists()) {
+        const groups = groupsSnap.val() as Record<string, AccountAdminGroup | null>;
+        Object.entries(groups).forEach(([id, group]) => {
+          if (!group || (!group.members?.[adminTargetUser] && group.createdBy !== adminTargetUser)) return;
+
+          const remainingMembers = Object.keys(group.members || {}).filter((member) => member !== adminTargetUser);
+          if (remainingMembers.length === 0) {
+            updates[`groups/${id}`] = null;
+            deletedGroupIds.add(id);
+            return;
+          }
+
+          updates[`groups/${id}/members/${adminTargetUser}`] = null;
+          if (group.createdBy === adminTargetUser) {
+            updates[`groups/${id}/createdBy`] = remainingMembers[0];
+          }
+        });
+      }
+
+      if (messagesSnap.exists()) {
+        const messages = messagesSnap.val() as Record<string, AccountAdminMessage | null>;
+        Object.entries(messages).forEach(([id, message]) => {
+          if (!message) return;
+          const groupId = typeof message.receiver === 'string' && message.receiver.startsWith(GROUP_PREFIX)
+            ? groupIdFromChannel(message.receiver)
+            : '';
+
+          if (
+            message.sender === adminTargetUser ||
+            message.receiver === adminTargetUser ||
+            deletedGroupIds.has(groupId)
+          ) {
+            updates[`messages/${id}`] = null;
+            return;
+          }
+
+          if (message.readBy?.[adminTargetUser]) {
+            updates[`messages/${id}/readBy/${adminTargetUser}`] = null;
+          }
+          Object.entries(message.reactions || {}).forEach(([emoji, users]) => {
+            if (users?.[adminTargetUser]) {
+              updates[`messages/${id}/reactions/${emoji}/${adminTargetUser}`] = null;
+            }
+          });
+          if (message.replyTo?.sender === adminTargetUser) {
+            updates[`messages/${id}/replyTo/sender`] = 'Deleted user';
+          }
+        });
+      }
+
+      if (typingSnap.exists()) {
+        const typing = typingSnap.val() as Record<string, Record<string, boolean> | null>;
+        Object.entries(typing).forEach(([channel, users]) => {
+          if (users?.[adminTargetUser]) {
+            updates[`typing/${channel}/${adminTargetUser}`] = null;
+          }
+        });
+      }
+
+      if (pinsSnap.exists()) {
+        const pins = pinsSnap.val() as Record<string, AccountAdminPin | null>;
+        const dmPinScopes = new Set(
+          allUsers
+            .filter((user) => user !== adminTargetUser)
+            .map((user) => `dm_${[adminTargetUser, user].sort().join('__')}`)
+        );
+        Object.entries(pins).forEach(([scope, pin]) => {
+          if (
+            pin?.sender === adminTargetUser ||
+            pin?.pinnedBy === adminTargetUser ||
+            dmPinScopes.has(scope)
+          ) {
+            updates[`pinnedMessages/${scope}`] = null;
+          }
+        });
+      }
+
+      await update(ref(database), updates);
+      await fetchUsersAndProfiles();
+      setAdminTargetUser('');
+      setAdminConfirmUsername('');
+    } catch (err) {
+      console.error('Error deleting account:', err);
+      setAdminError('Could not delete this account. Check your connection and try again.');
+    } finally {
+      setDeletingAccount(false);
+    }
   };
 
   const handleGrantBadgeSubmit = async (e: React.FormEvent) => {
@@ -3328,6 +3464,24 @@ export default function SecretChat({ onClose }: SecretChatProps) {
               <div className="border-t border-slate-800 pt-5">
                 <button
                   onClick={() => {
+                    setShowSettingsModal(false);
+                    setAdminSearch('');
+                    setAdminTargetUser('');
+                    setAdminConfirmUsername('');
+                    setAdminError('');
+                    fetchUsersAndProfiles();
+                    setShowAdministrationModal(true);
+                  }}
+                  className="mb-2 flex w-full items-center justify-between rounded-xl border border-red-500/30 bg-red-600/10 px-4 py-3 text-xs font-bold text-red-300 transition-all hover:bg-red-600 hover:text-white"
+                >
+                  <span className="flex items-center gap-2">
+                    <ShieldAlert className="h-4 w-4" />
+                    Administration
+                  </span>
+                  <ChevronRight className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => {
                     fetchUsersAndProfiles();
                     setBadgeFormError('');
                     setShowGrantBadgeModal(true);
@@ -3341,6 +3495,114 @@ export default function SecretChat({ onClose }: SecretChatProps) {
                   <Crown className="h-4 w-4" />
                 </button>
               </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* FOUNDER ACCOUNT ADMINISTRATION */}
+      {showAdministrationModal && isCurrentFounder && (
+        <div
+          onClick={() => setShowAdministrationModal(false)}
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/85 p-4 backdrop-blur-md"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="chat-dialog relative max-h-[85vh] w-full max-w-md overflow-y-auto rounded-3xl border border-slate-800 bg-[#1f2c34] p-5 text-slate-100 shadow-2xl sm:p-6"
+          >
+            <button
+              onClick={() => setShowAdministrationModal(false)}
+              aria-label="Close administration"
+              className="absolute right-4 top-4 rounded-full p-2 text-slate-400 hover:bg-slate-700 hover:text-white"
+            >
+              <X className="h-5 w-5" />
+            </button>
+            <div className="mb-4 flex items-center gap-3 pr-10">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-red-400/20 bg-red-500/10 text-red-300">
+                <ShieldAlert className="h-5 w-5" />
+              </div>
+              <div>
+                <h3 className="text-base font-bold text-white">Administration</h3>
+                <p className="text-xs text-slate-400">Delete an account and its chat data</p>
+              </div>
+            </div>
+
+            <label className="mb-2 block text-xs font-semibold text-slate-300" htmlFor="admin-account-search">
+              Find an account
+            </label>
+            <div className="relative mb-3">
+              <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-500" />
+              <input
+                id="admin-account-search"
+                type="search"
+                value={adminSearch}
+                onChange={(e) => setAdminSearch(e.target.value)}
+                placeholder="Search usernames"
+                className="w-full rounded-xl border border-slate-700 bg-[#111b21] py-2.5 pl-9 pr-3 text-sm text-white placeholder-slate-500 focus:border-emerald-500 focus:outline-none"
+              />
+            </div>
+
+            <div className="max-h-52 space-y-1 overflow-y-auto rounded-xl border border-slate-800 bg-[#111b21] p-1.5">
+              {allUsers
+                .filter((user) => user !== currentUser && user.toLowerCase().includes(adminSearch.trim().toLowerCase()))
+                .sort((a, b) => a.localeCompare(b))
+                .map((user) => (
+                  <button
+                    key={user}
+                    type="button"
+                    onClick={() => {
+                      setAdminTargetUser(user);
+                      setAdminConfirmUsername('');
+                      setAdminError('');
+                    }}
+                    className={`flex w-full items-center justify-between gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                      adminTargetUser === user
+                        ? 'bg-red-500/15 text-red-200'
+                        : 'text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    <span className="truncate">@{user}</span>
+                    {adminTargetUser === user && <Trash2 className="h-4 w-4 shrink-0" />}
+                  </button>
+                ))}
+              {allUsers.filter((user) => user !== currentUser && user.toLowerCase().includes(adminSearch.trim().toLowerCase())).length === 0 && (
+                <p className="px-3 py-4 text-center text-xs text-slate-500">No matching accounts.</p>
+              )}
+            </div>
+
+            {adminTargetUser && (
+              <div className="mt-4 rounded-xl border border-red-500/25 bg-red-500/5 p-3.5">
+                <p className="text-xs leading-relaxed text-slate-300">
+                  This permanently removes <strong className="text-red-300">@{adminTargetUser}</strong>, their messages,
+                  and their group membership from the app database.
+                </p>
+                <label className="mt-3 block text-xs font-semibold text-slate-300" htmlFor="admin-delete-confirmation">
+                  Type <span className="font-mono text-red-300">{adminTargetUser}</span> to confirm
+                </label>
+                <input
+                  id="admin-delete-confirmation"
+                  type="text"
+                  value={adminConfirmUsername}
+                  onChange={(e) => setAdminConfirmUsername(e.target.value)}
+                  autoComplete="off"
+                  className="mt-1.5 w-full rounded-lg border border-slate-700 bg-[#111b21] px-3 py-2 text-sm text-white focus:border-red-400 focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={handleDeleteAccount}
+                  disabled={deletingAccount || adminConfirmUsername !== adminTargetUser}
+                  className="mt-3 flex w-full items-center justify-center gap-2 rounded-lg bg-red-600 px-3 py-2.5 text-xs font-bold text-white transition-colors hover:bg-red-500 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  {deletingAccount ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  {deletingAccount ? 'Deleting account...' : 'Delete account permanently'}
+                </button>
+              </div>
+            )}
+
+            {adminError && (
+              <p role="alert" className="mt-3 rounded-lg border border-red-500/20 bg-red-500/10 p-2.5 text-xs text-red-300">
+                {adminError}
+              </p>
             )}
           </div>
         </div>
