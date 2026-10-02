@@ -786,8 +786,8 @@ export default function SecretChat({ onClose }: SecretChatProps) {
       if (data) {
         const loaded: ChatMessage[] = Object.entries(data).map(([key, value]: [string, any]) => ({
           id: key,
-          sender: value.sender,
-          receiver: value.receiver || 'general',
+          sender: typeof value.sender === 'string' ? value.sender : '',
+          receiver: typeof value.receiver === 'string' ? value.receiver : 'general',
           text: value.text || '',
           imageUrl: value.imageUrl,
           time: value.time,
